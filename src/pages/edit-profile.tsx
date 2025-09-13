@@ -155,7 +155,10 @@ export default function EditProfilePage() {
       // Upload avatar if a new one was selected
       if (avatarFile) {
         console.log('Uploading new avatar...');
-        avatarUrl = await uploadAvatar();
+        const uploadedUrl = await uploadAvatar();
+        if (uploadedUrl) {
+          avatarUrl = uploadedUrl;
+        }
       }
 
       await updateUserProfile(user.uid, {

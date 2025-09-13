@@ -47,7 +47,7 @@ interface Video {
   title: string;
   description: string;
   tags: string[];
-  techMeta: { camera?: string; durationSec?: number };
+  techMeta: { camera?: string; lenses?: string; location?: string; durationSec?: number };
   playback: { posterUrl?: string };
   visibility: string;
   createdAt: any;
