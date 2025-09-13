@@ -1,0 +1,28 @@
+# Folio Project Rules
+
+## Firebase Database
+- ALL Firestore operations must reference the "folio-nicco" database, NOT the default database
+- Use `getFirestore(app, 'folio-nicco')` for all environments
+- Never use `getFirestore(app)` without specifying the database ID
+
+## File Structure
+- All project files and directories must be created under the /src directory
+- Use Next.js pages router format: /src/pages/
+- Components go in /src/components/
+- Utilities go in /src/lib/ or /src/utils/
+
+## Tech Stack
+- Next.js with TypeScript and React pages in the /pages/index.tsx format
+- Firebase for all backend services (Auth, Firestore, Storage, Functions)
+- Deploy to Vercel
+- Use the design tokens and UI components from /src/styles/globals.css
+
+## Authentication
+- Use Firebase Auth with email/password and Google OAuth
+- Store user profiles in Firestore under "folio-nicco" database
+- Follow the data model from docs/Data-Model.md
+
+## Code Style
+- TypeScript strict mode
+- Use semantic CSS classes from globals.css
+- Follow the brand guidelines from docs/design/Brand-Guidelines.md

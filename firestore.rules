@@ -1,0 +1,61 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/folio-nicco/documents {
+    // Users can read/write their own user document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Users can read/write their own profile
+    match /profiles/{userId} {
+      allow read: if true; // Public profiles can be read by anyone
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Videos - users can read public videos, write their own
+    match /videos/{videoId} {
+      allow read: if resource.data.visibility == 'public' || 
+                     (request.auth != null && request.auth.uid == resource.data.ownerUid);
+      allow write: if request.auth != null && request.auth.uid == resource.data.ownerUid;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerUid;
+    }
+    
+    // Credits - users can read public credits, write their own
+    match /credits/{creditId} {
+      allow read: if true; // Credits are generally public
+      allow write: if request.auth != null && request.auth.uid == resource.data.subjectUid;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.subjectUid;
+    }
+    
+    // Companies - members can read, owners/admins can write
+    match /companies/{companyId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                      (request.auth.uid == resource.data.ownerUid ||
+                       request.auth.uid in resource.data.members[].uid);
+    }
+    
+    // Projects - participants can read/write
+    match /projects/{projectId} {
+      allow read, write: if request.auth != null && 
+                            request.auth.uid in resource.data.participants[].uid;
+    }
+    
+    // Video analytics - views and shares
+    match /videoViews/{viewId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null || true; // Allow anonymous view tracking
+    }
+    
+    match /videoShares/{shareId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+    }
+    
+    // Default deny all other documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
