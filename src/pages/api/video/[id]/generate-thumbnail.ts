@@ -68,7 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Read the generated thumbnail
     const thumbnailData = await ffmpeg.readFile('thumbnail.jpg');
-    const thumbnailBuffer = new Uint8Array(thumbnailData as ArrayBuffer);
+    const thumbnailBuffer = thumbnailData as Uint8Array;
 
     // Upload thumbnail to Firebase Storage
     const timestamp = Date.now();
