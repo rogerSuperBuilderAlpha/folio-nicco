@@ -601,23 +601,15 @@ export default function EditVideoPage() {
               }}>
                 <button
                   type="button"
-                  onClick={generateAutoThumbnails}
+                  onClick={captureFrame}
                   className="btn btn--primary"
                   disabled={!videoReady}
                 >
-                  🎬 Generate Thumbnails
-                </button>
-                <button
-                  type="button"
-                  onClick={captureFrame}
-                  className="btn btn--secondary"
-                  disabled={!videoReady}
-                >
-                  📸 Capture Frame
+                  📸 Set Thumbnail
                 </button>
                 <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)' }}>
                   {videoReady 
-                    ? "Generate multiple thumbnail options or capture the current frame"
+                    ? "Scrub to the perfect frame and click 'Set Thumbnail'"
                     : "Loading video... Please wait"
                   }
                 </p>
