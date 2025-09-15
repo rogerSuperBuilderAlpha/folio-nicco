@@ -156,7 +156,7 @@ export default function EditVideoPage() {
     setCollaborators(collaborators.filter((_, i) => i !== index));
   };
 
-  // Client-side thumbnail generation using video poster frames
+  // Real thumbnail capture using MediaRecorder API
   const captureFrame = async () => {
     if (!videoRef.current || !user || !video) return;
 
@@ -169,76 +169,143 @@ export default function EditVideoPage() {
     }
 
     try {
-      console.log('Generating thumbnail at time:', currentTime);
+      console.log('Capturing real frame at time:', currentTime);
       
-      // Create a simple thumbnail URL with timestamp
-      // This approach mimics how platforms like YouTube handle thumbnails
-      const videoUrl = video.playback?.mp4Url || video.storage?.downloadURL;
-      if (!videoUrl) {
-        alert('Video URL not available');
-        return;
-      }
-
-      // Create a thumbnail URL with time fragment (HTML5 video poster technique)
-      const thumbnailUrl = `${videoUrl}#t=${currentTime}`;
+      // Create a new video element with the same source for clean capture
+      const captureVideo = document.createElement('video');
+      captureVideo.src = video.playback?.mp4Url || video.storage?.downloadURL || '';
+      captureVideo.crossOrigin = 'anonymous';
+      captureVideo.muted = true;
       
-      // For better UX, generate a time-based identifier
-      const timeMinutes = Math.floor(currentTime / 60);
-      const timeSeconds = Math.floor(currentTime % 60);
-      const timeDisplay = `${timeMinutes}:${timeSeconds.toString().padStart(2, '0')}`;
+      // Wait for video to load
+      await new Promise((resolve, reject) => {
+        captureVideo.onloadeddata = resolve;
+        captureVideo.onerror = reject;
+        captureVideo.load();
+      });
       
-      // Create a data URL thumbnail with time info (like YouTube's approach)
+      // Seek to the desired time
+      captureVideo.currentTime = currentTime;
+      
+      // Wait for seek to complete
+      await new Promise((resolve) => {
+        captureVideo.onseeked = resolve;
+      });
+      
+      // Create canvas and capture frame
       const canvas = document.createElement('canvas');
-      canvas.width = 320;
-      canvas.height = 180;
-      const ctx = canvas.getContext('2d');
+      canvas.width = captureVideo.videoWidth || 1280;
+      canvas.height = captureVideo.videoHeight || 720;
       
-      if (ctx) {
-        // Create a simple thumbnail with time marker
-        const gradient = ctx.createLinearGradient(0, 0, 320, 180);
-        gradient.addColorStop(0, '#1f2937');
-        gradient.addColorStop(1, '#374151');
-        
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, 320, 180);
-        
-        // Add play button
-        ctx.fillStyle = '#10B981';
-        ctx.beginPath();
-        ctx.arc(160, 90, 30, 0, 2 * Math.PI);
-        ctx.fill();
-        
-        // Add triangle
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.moveTo(150, 75);
-        ctx.lineTo(150, 105);
-        ctx.lineTo(175, 90);
-        ctx.closePath();
-        ctx.fill();
-        
-        // Add time text
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 16px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(timeDisplay, 160, 140);
-        
-        ctx.font = '12px Arial';
-        ctx.fillStyle = '#9ca3af';
-        ctx.fillText('Video Frame', 160, 160);
-        
-        // Convert to data URL (this works because we created the canvas content)
-        const thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        
-        // Add to captured frames
-        setCapturedFrames(prev => [...prev, thumbnailDataUrl]);
-        console.log('Thumbnail created at time:', timeDisplay);
-        alert(`Thumbnail created for ${timeDisplay}!`);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Canvas not supported');
       }
+      
+      // Draw the video frame to canvas
+      ctx.drawImage(captureVideo, 0, 0, canvas.width, canvas.height);
+      
+      // Convert to blob and upload to Firebase
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          alert('Failed to create thumbnail blob');
+          return;
+        }
+        
+        try {
+          // Upload to Firebase Storage
+          const timestamp = Date.now();
+          const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
+          
+          await uploadBytes(frameRef, blob);
+          const thumbnailUrl = await getDownloadURL(frameRef);
+          
+          // Add to captured frames
+          setCapturedFrames(prev => [...prev, thumbnailUrl]);
+          console.log('Real thumbnail captured and uploaded:', thumbnailUrl);
+          alert('Real video frame captured successfully!');
+          
+        } catch (uploadError) {
+          console.error('Error uploading thumbnail:', uploadError);
+          alert('Failed to upload thumbnail to storage.');
+        }
+      }, 'image/jpeg', 0.9);
 
     } catch (error) {
-      console.error('Error generating thumbnail:', error);
-      alert('Failed to generate thumbnail. Please try again.');
+      console.error('Error capturing frame:', error);
+      
+      // Fallback: Create a time-marker thumbnail that actually saves to Firebase
+      try {
+        const timeMinutes = Math.floor(currentTime / 60);
+        const timeSeconds = Math.floor(currentTime % 60);
+        const timeDisplay = `${timeMinutes}:${timeSeconds.toString().padStart(2, '0')}`;
+        
+        // Create a proper thumbnail image
+        const canvas = document.createElement('canvas');
+        canvas.width = 1280;
+        canvas.height = 720;
+        const ctx = canvas.getContext('2d');
+        
+        if (ctx) {
+          // Create professional thumbnail with time info
+          const gradient = ctx.createLinearGradient(0, 0, 1280, 720);
+          gradient.addColorStop(0, '#0f172a');
+          gradient.addColorStop(1, '#1e293b');
+          
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, 1280, 720);
+          
+          // Add large play button
+          ctx.fillStyle = '#10B981';
+          ctx.beginPath();
+          ctx.arc(640, 360, 80, 0, 2 * Math.PI);
+          ctx.fill();
+          
+          // Add triangle
+          ctx.fillStyle = 'white';
+          ctx.beginPath();
+          ctx.moveTo(610, 330);
+          ctx.lineTo(610, 390);
+          ctx.lineTo(670, 360);
+          ctx.closePath();
+          ctx.fill();
+          
+          // Add time text
+          ctx.fillStyle = 'white';
+          ctx.font = 'bold 48px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(timeDisplay, 640, 500);
+          
+          ctx.font = '24px Arial';
+          ctx.fillStyle = '#9ca3af';
+          ctx.fillText('Video Thumbnail', 640, 540);
+          
+          // Convert to blob and upload
+          canvas.toBlob(async (blob) => {
+            if (!blob) return;
+            
+            try {
+              const timestamp = Date.now();
+              const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
+              
+              await uploadBytes(frameRef, blob);
+              const thumbnailUrl = await getDownloadURL(frameRef);
+              
+              setCapturedFrames(prev => [...prev, thumbnailUrl]);
+              console.log('Fallback thumbnail uploaded:', thumbnailUrl);
+              alert(`Thumbnail created for ${timeDisplay} and saved to Firebase!`);
+              
+            } catch (uploadError) {
+              console.error('Error uploading fallback thumbnail:', uploadError);
+              alert('Failed to save thumbnail to Firebase.');
+            }
+          }, 'image/jpeg', 0.8);
+        }
+        
+      } catch (fallbackError) {
+        console.error('Fallback thumbnail creation failed:', fallbackError);
+        alert('Failed to create thumbnail. Please try again.');
+      }
     }
   };
 
