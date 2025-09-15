@@ -156,7 +156,7 @@ export default function EditVideoPage() {
     setCollaborators(collaborators.filter((_, i) => i !== index));
   };
 
-  // Frame capture with CORS bypass
+  // Server-side thumbnail generation
   const captureFrame = async () => {
     if (!videoRef.current || !user || !video) return;
 
@@ -169,76 +169,37 @@ export default function EditVideoPage() {
     }
 
     try {
-      // Create a new video element that loads the same source
-      const tempVideo = document.createElement('video');
-      tempVideo.crossOrigin = 'anonymous';
-      tempVideo.src = video.playback?.mp4Url || video.storage?.downloadURL || '';
+      console.log('Generating thumbnail at time:', currentTime);
       
-      tempVideo.onloadeddata = async () => {
-        try {
-          // Seek to the current time
-          tempVideo.currentTime = currentTime;
-          
-          tempVideo.onseeked = async () => {
-            try {
-              // Create canvas for capture
-              const canvas = document.createElement('canvas');
-              const ctx = canvas.getContext('2d');
-              
-              if (!ctx) {
-                alert('Canvas not supported.');
-                return;
-              }
+      const response = await fetch(`/api/video/${video.id}/generate-thumbnail`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          timeInSeconds: currentTime,
+          userUid: user.uid
+        })
+      });
 
-              // Set canvas size
-              canvas.width = tempVideo.videoWidth;
-              canvas.height = tempVideo.videoHeight;
+      const data = await response.json();
 
-              // Draw frame
-              ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-              
-              // Convert to blob
-              canvas.toBlob(async (blob) => {
-                if (!blob) return;
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate thumbnail');
+      }
 
-                try {
-                  // Upload to Firebase Storage
-                  const timestamp = Date.now();
-                  const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
-                  
-                  await uploadBytes(frameRef, blob);
-                  const frameUrl = await getDownloadURL(frameRef);
-                  
-                  // Add to captured frames
-                  setCapturedFrames(prev => [...prev, frameUrl]);
-                  
-                  console.log('Frame captured successfully:', frameUrl);
-                  alert('Frame captured successfully!');
-                } catch (error) {
-                  console.error('Error uploading frame:', error);
-                  alert('Failed to upload frame. Please try again.');
-                }
-              }, 'image/jpeg', 0.9);
-              
-            } catch (error) {
-              console.error('Error capturing frame:', error);
-              alert('Failed to capture frame. Please try again.');
-            }
-          };
-        } catch (error) {
-          console.error('Error seeking video:', error);
-          alert('Failed to seek to frame. Please try again.');
-        }
-      };
-
-      tempVideo.onerror = () => {
-        console.error('Error loading temp video for capture');
-        alert('Failed to load video for frame capture. This may be due to CORS restrictions.');
-      };
+      if (data.success && data.thumbnailUrl) {
+        // Add to captured frames
+        setCapturedFrames(prev => [...prev, data.thumbnailUrl]);
+        console.log('Thumbnail generated successfully:', data.thumbnailUrl);
+        alert('Thumbnail generated successfully!');
+      } else {
+        throw new Error('Invalid response from thumbnail API');
+      }
 
     } catch (error) {
-      console.error('Error setting up frame capture:', error);
-      alert('Failed to set up frame capture. Please try again.');
+      console.error('Error generating thumbnail:', error);
+      alert('Failed to generate thumbnail. Please try again.');
     }
   };
 
@@ -483,7 +444,7 @@ export default function EditVideoPage() {
                   className="btn btn--primary"
                   disabled={!videoReady}
                 >
-                  📸 Capture Current Frame
+                  📸 Generate Thumbnail
                 </button>
                 <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)' }}>
                   {videoReady 

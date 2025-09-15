@@ -43,6 +43,8 @@ export default function DashboardPage() {
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [draggedVideo, setDraggedVideo] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTag, setSelectedTag] = useState<string>('');
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -121,6 +123,39 @@ export default function DashboardPage() {
     );
   }
 
+  // Get all unique tags for dropdown
+  const allTags = Array.from(new Set(videos.flatMap(video => video.tags))).sort();
+
+  // Search function that searches across all video fields
+  const searchInVideo = (video: Video, query: string): boolean => {
+    if (!query.trim()) return true;
+    
+    const searchTerm = query.toLowerCase().trim();
+    
+    // Search in basic fields
+    const basicFields = [
+      video.title,
+      video.description,
+      video.visibility,
+      ...(video.tags || []),
+      ...(video.collaborators?.map(c => c.role) || [])
+    ];
+    
+    // Search in techMeta fields
+    const techFields = [
+      video.techMeta?.camera,
+      video.techMeta?.lenses,
+      video.techMeta?.location
+    ].filter(Boolean);
+    
+    // Combine all searchable text
+    const searchableText = [...basicFields, ...techFields]
+      .join(' ')
+      .toLowerCase();
+    
+    return searchableText.includes(searchTerm);
+  };
+
   const filteredVideos = videos.filter(video => {
     // Filter by folder
     let inCorrectFolder = true;
@@ -134,7 +169,13 @@ export default function DashboardPage() {
     // Filter by visibility
     const matchesVisibility = filter === 'all' || video.visibility === filter;
     
-    return inCorrectFolder && matchesVisibility;
+    // Filter by search query
+    const matchesSearch = searchInVideo(video, searchQuery);
+    
+    // Filter by selected tag
+    const matchesTag = !selectedTag || video.tags.includes(selectedTag);
+    
+    return inCorrectFolder && matchesVisibility && matchesSearch && matchesTag;
   });
 
   const stats = {
@@ -191,6 +232,12 @@ export default function DashboardPage() {
       console.error('Error copying to clipboard or tracking share:', error);
       alert('Failed to copy. Please try again.');
     }
+  };
+
+  const clearAllFilters = () => {
+    setSearchQuery('');
+    setSelectedTag('');
+    setFilter('all');
   };
 
   // Folder management functions
@@ -396,8 +443,16 @@ export default function DashboardPage() {
               <p style={{ margin: 'var(--space-1) 0 0', color: 'var(--text-secondary)' }}>
                 {currentFolder 
                   ? `${filteredVideos.length} videos in this folder`
-                  : `${filteredVideos.length} videos • Drag videos into folders to organize`
+                  : `${filteredVideos.length} of ${videos.length} videos`
                 }
+                {(searchQuery || selectedTag) && (
+                  <span>
+                    {' • '}
+                    {searchQuery && `Search: "${searchQuery}"`}
+                    {searchQuery && selectedTag && ' • '}
+                    {selectedTag && `Tag: "${selectedTag}"`}
+                  </span>
+                )}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
@@ -409,6 +464,56 @@ export default function DashboardPage() {
 
           {/* Filters */}
           <div className="video-filters" style={{ marginBottom: 'var(--space-6)' }}>
+            {/* Search and Tag Filters */}
+            <div style={{ 
+              display: 'flex', 
+              gap: 'var(--space-4)', 
+              marginBottom: 'var(--space-4)',
+              flexWrap: 'wrap',
+              alignItems: 'center'
+            }}>
+              {/* Search Bar */}
+              <div style={{ flex: '1', minWidth: '300px' }}>
+                <input
+                  type="text"
+                  placeholder="Search videos by title, description, tags, camera, location..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="input"
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              {/* Tag Dropdown */}
+              <div style={{ minWidth: '200px' }}>
+                <select
+                  value={selectedTag}
+                  onChange={(e) => setSelectedTag(e.target.value)}
+                  className="input"
+                  style={{ width: '100%' }}
+                >
+                  <option value="">All Tags</option>
+                  {allTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag} ({videos.filter(v => v.tags.includes(tag)).length})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Clear Filters Button */}
+              {(searchQuery || selectedTag || filter !== 'all') && (
+                <button
+                  onClick={clearAllFilters}
+                  className="btn btn--ghost"
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+
+            {/* Visibility Filter Buttons */}
             <div className="filter-buttons">
               {(['all', 'public', 'private', 'unlisted'] as const).map((filterOption) => (
                 <button
