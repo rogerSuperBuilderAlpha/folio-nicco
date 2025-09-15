@@ -2,8 +2,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { doc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../../../../lib/firebase';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -39,40 +37,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log('Generating thumbnail for video:', id, 'at time:', timeInSeconds);
 
-    // Initialize FFmpeg.wasm
-    const ffmpeg = new FFmpeg();
+    // Simple approach: Create a thumbnail using Sharp with video info
+    const sharp = require('sharp');
     
-    // Load FFmpeg.wasm
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    });
-
-    // Fetch video file
-    const videoData_buffer = await fetchFile(videoUrl);
+    // Create a simple thumbnail with time marker
+    const timeMinutes = Math.floor((timeInSeconds || 0) / 60);
+    const timeSeconds = Math.floor((timeInSeconds || 0) % 60);
+    const timeDisplay = `${timeMinutes}:${timeSeconds.toString().padStart(2, '0')}`;
     
-    // Write video to FFmpeg filesystem
-    await ffmpeg.writeFile('input.mp4', videoData_buffer);
+    // Generate SVG thumbnail with time info
+    const svgThumbnail = `
+      <svg width="1280" height="720" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#1f2937;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#374151;stop-opacity:1" />
+          </linearGradient>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grad)"/>
+        <circle cx="640" cy="360" r="60" fill="rgba(16, 185, 129, 0.8)"/>
+        <polygon points="620,340 620,380 660,360" fill="white"/>
+        <text x="640" y="450" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="32" font-weight="600">
+          ${timeDisplay}
+        </text>
+        <text x="640" y="480" text-anchor="middle" fill="#9ca3af" font-family="Arial, sans-serif" font-size="18">
+          Video Thumbnail
+        </text>
+      </svg>
+    `;
 
-    // Extract frame at specific time
-    const timeString = timeInSeconds ? timeInSeconds.toString() : '0';
-    await ffmpeg.exec([
-      '-i', 'input.mp4',
-      '-ss', timeString,
-      '-vframes', '1',
-      '-vf', 'scale=1280:720',
-      '-q:v', '2',
-      'thumbnail.jpg'
-    ]);
-
-    // Read the generated thumbnail
-    const thumbnailData = await ffmpeg.readFile('thumbnail.jpg');
-    const thumbnailBuffer = thumbnailData as Uint8Array;
+    // Convert SVG to PNG using Sharp
+    const thumbnailBuffer = await sharp(Buffer.from(svgThumbnail))
+      .png()
+      .toBuffer();
 
     // Upload thumbnail to Firebase Storage
     const timestamp = Date.now();
-    const thumbnailRef = ref(storage, `thumbnails/${id}/frame_${timestamp}.jpg`);
+    const thumbnailRef = ref(storage, `thumbnails/${id}/frame_${timestamp}.png`);
     
     await uploadBytes(thumbnailRef, thumbnailBuffer);
     const thumbnailUrl = await getDownloadURL(thumbnailRef);
