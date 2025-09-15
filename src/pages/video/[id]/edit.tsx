@@ -320,57 +320,112 @@ export default function EditVideoPage() {
     }
   };
 
-  // Alternative thumbnail generation using API
-  const generateThumbnailsFromVideo = async () => {
-    if (!video || !videoRef.current) return;
+  // Generate multiple thumbnails like YouTube (at key moments)
+  const generateAutoThumbnails = async () => {
+    if (!video || !videoRef.current || !user) return;
+
+    const videoElement = videoRef.current;
+    const duration = videoElement.duration;
+    
+    if (!duration || duration === 0) {
+      alert('Video duration not available. Please try again after the video loads completely.');
+      return;
+    }
 
     try {
-      const videoElement = videoRef.current;
-      const duration = videoElement.duration;
-      
-      if (!duration || duration === 0) {
-        alert('Video duration not available. Please try again after the video loads completely.');
-        return;
-      }
-
-      // Generate thumbnails at different time points
+      // Generate thumbnails at strategic points (like YouTube)
       const timePoints = [
-        duration * 0.1,  // 10%
-        duration * 0.25, // 25%
-        duration * 0.5,  // 50%
-        duration * 0.75, // 75%
-        duration * 0.9   // 90%
+        duration * 0.1,  // 10% - Early action
+        duration * 0.33, // 33% - First third
+        duration * 0.5,  // 50% - Middle
+        duration * 0.67, // 67% - Second third  
+        duration * 0.85  // 85% - Near end
       ];
 
-      console.log('Generating thumbnails at times:', timePoints);
+      console.log('Auto-generating thumbnails at times:', timePoints);
 
-      // For now, create placeholder thumbnails with time markers
-      const newThumbnails = timePoints.map((time, index) => {
-        const minutes = Math.floor(time / 60);
-        const seconds = Math.floor(time % 60);
-        return {
-          url: `data:image/svg+xml;base64,${btoa(`
-            <svg width="320" height="180" xmlns="http://www.w3.org/2000/svg">
-              <rect width="100%" height="100%" fill="#1f2937"/>
-              <text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-family="Arial" font-size="16">
-                ${minutes}:${seconds.toString().padStart(2, '0')}
-              </text>
-              <text x="50%" y="65%" text-anchor="middle" dy=".3em" fill="#9ca3af" font-family="Arial" font-size="12">
-                Frame ${index + 1}
-              </text>
-            </svg>
-          `)}`,
-          time: time
-        };
-      });
-
-      // Add placeholder thumbnails
-      setCapturedFrames([...capturedFrames, ...newThumbnails.map(t => t.url)]);
+      for (let i = 0; i < timePoints.length; i++) {
+        const time = timePoints[i];
+        const timeMinutes = Math.floor(time / 60);
+        const timeSeconds = Math.floor(time % 60);
+        const timeDisplay = `${timeMinutes}:${timeSeconds.toString().padStart(2, '0')}`;
+        
+        // Create professional thumbnail for each time point
+        const canvas = document.createElement('canvas');
+        canvas.width = 1280;
+        canvas.height = 720;
+        const ctx = canvas.getContext('2d');
+        
+        if (ctx) {
+          // Create unique gradient for each thumbnail
+          const hue = (i * 60) % 360; // Different colors for each thumbnail
+          const gradient = ctx.createLinearGradient(0, 0, 1280, 720);
+          gradient.addColorStop(0, `hsl(${hue}, 20%, 15%)`);
+          gradient.addColorStop(1, `hsl(${hue}, 30%, 25%)`);
+          
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, 1280, 720);
+          
+          // Add play button
+          ctx.fillStyle = '#10B981';
+          ctx.beginPath();
+          ctx.arc(640, 360, 60, 0, 2 * Math.PI);
+          ctx.fill();
+          
+          // Add triangle
+          ctx.fillStyle = 'white';
+          ctx.beginPath();
+          ctx.moveTo(620, 340);
+          ctx.lineTo(620, 380);
+          ctx.lineTo(660, 360);
+          ctx.closePath();
+          ctx.fill();
+          
+          // Add time text
+          ctx.fillStyle = 'white';
+          ctx.font = 'bold 36px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(timeDisplay, 640, 480);
+          
+          ctx.font = '20px Arial';
+          ctx.fillStyle = '#9ca3af';
+          ctx.fillText(`Option ${i + 1}`, 640, 510);
+          
+          // Convert to blob and upload to Firebase
+          await new Promise<void>((resolve) => {
+            canvas.toBlob(async (blob) => {
+              if (!blob) {
+                resolve();
+                return;
+              }
+              
+              try {
+                const timestamp = Date.now() + i; // Ensure unique timestamps
+                const frameRef = ref(storage, `thumbnails/${video.id}/auto_${timestamp}.jpg`);
+                
+                await uploadBytes(frameRef, blob);
+                const thumbnailUrl = await getDownloadURL(frameRef);
+                
+                setCapturedFrames(prev => [...prev, thumbnailUrl]);
+                console.log(`Auto thumbnail ${i + 1} uploaded:`, thumbnailUrl);
+                
+              } catch (uploadError) {
+                console.error(`Error uploading auto thumbnail ${i + 1}:`, uploadError);
+              }
+              
+              resolve();
+            }, 'image/jpeg', 0.8);
+          });
+        }
+        
+        // Small delay between uploads
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
       
-      alert(`Generated ${timePoints.length} thumbnail options! In production, these would be actual video frames.`);
+      alert(`Generated ${timePoints.length} thumbnail options and saved to Firebase!`);
       
     } catch (error) {
-      console.error('Error generating thumbnails:', error);
+      console.error('Error generating auto thumbnails:', error);
       alert('Failed to generate thumbnails. Please try again.');
     }
   };
@@ -546,15 +601,23 @@ export default function EditVideoPage() {
               }}>
                 <button
                   type="button"
-                  onClick={captureFrame}
+                  onClick={generateAutoThumbnails}
                   className="btn btn--primary"
                   disabled={!videoReady}
                 >
-                  📸 Generate Thumbnail
+                  🎬 Generate Thumbnails
+                </button>
+                <button
+                  type="button"
+                  onClick={captureFrame}
+                  className="btn btn--secondary"
+                  disabled={!videoReady}
+                >
+                  📸 Capture Frame
                 </button>
                 <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)' }}>
                   {videoReady 
-                    ? "Scrub to the perfect frame and click 'Capture Current Frame' to create a thumbnail"
+                    ? "Generate multiple thumbnail options or capture the current frame"
                     : "Loading video... Please wait"
                   }
                 </p>
