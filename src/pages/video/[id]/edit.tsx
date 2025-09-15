@@ -156,86 +156,89 @@ export default function EditVideoPage() {
     setCollaborators(collaborators.filter((_, i) => i !== index));
   };
 
-  // Frame capture functions
+  // Frame capture with CORS bypass
   const captureFrame = async () => {
-    if (!videoRef.current || !canvasRef.current || !user || !video) return;
+    if (!videoRef.current || !user || !video) return;
 
     const videoElement = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const currentTime = videoElement.currentTime;
 
-    if (!ctx) {
-      alert('Canvas not supported. Please try a different browser.');
-      return;
-    }
-
-    // Check if video is loaded
     if (videoElement.readyState < 2) {
       alert('Video is still loading. Please wait and try again.');
       return;
     }
 
-    // Set canvas size to match video
-    canvas.width = videoElement.videoWidth || 1920;
-    canvas.height = videoElement.videoHeight || 1080;
-
     try {
-      // Draw current frame to canvas
-      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-      console.log('Frame drawn to canvas at time:', videoElement.currentTime);
-
-      // Try to convert to blob with CORS workaround
-      try {
-        canvas.toBlob(async (blob) => {
-          if (!blob) return;
-
-          try {
-            // Upload frame to Firebase Storage
-            const timestamp = Date.now();
-            const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
-            
-            await uploadBytes(frameRef, blob);
-            const frameUrl = await getDownloadURL(frameRef);
-            
-            // Add to captured frames
-            setCapturedFrames([...capturedFrames, frameUrl]);
-            
-            console.log('Frame captured:', frameUrl);
-          } catch (error) {
-            console.error('Error uploading frame:', error);
-            alert('Failed to upload frame. Please try again.');
-          }
-        }, 'image/jpeg', 0.8);
-      } catch (corsError) {
-        console.error('CORS error with canvas:', corsError);
-        
-        // Fallback: Use data URL instead of blob
+      // Create a new video element that loads the same source
+      const tempVideo = document.createElement('video');
+      tempVideo.crossOrigin = 'anonymous';
+      tempVideo.src = video.playback?.mp4Url || video.storage?.downloadURL || '';
+      
+      tempVideo.onloadeddata = async () => {
         try {
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          // Seek to the current time
+          tempVideo.currentTime = currentTime;
           
-          // Convert data URL to blob
-          const response = await fetch(dataUrl);
-          const blob = await response.blob();
-          
-          // Upload frame to Firebase Storage
-          const timestamp = Date.now();
-          const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
-          
-          await uploadBytes(frameRef, blob);
-          const frameUrl = await getDownloadURL(frameRef);
-          
-          // Add to captured frames
-          setCapturedFrames([...capturedFrames, frameUrl]);
-          
-          console.log('Frame captured via fallback method:', frameUrl);
-        } catch (fallbackError) {
-          console.error('Fallback frame capture failed:', fallbackError);
-          alert('Frame capture failed due to browser security restrictions. This may happen with some video formats.');
+          tempVideo.onseeked = async () => {
+            try {
+              // Create canvas for capture
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              
+              if (!ctx) {
+                alert('Canvas not supported.');
+                return;
+              }
+
+              // Set canvas size
+              canvas.width = tempVideo.videoWidth;
+              canvas.height = tempVideo.videoHeight;
+
+              // Draw frame
+              ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+              
+              // Convert to blob
+              canvas.toBlob(async (blob) => {
+                if (!blob) return;
+
+                try {
+                  // Upload to Firebase Storage
+                  const timestamp = Date.now();
+                  const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
+                  
+                  await uploadBytes(frameRef, blob);
+                  const frameUrl = await getDownloadURL(frameRef);
+                  
+                  // Add to captured frames
+                  setCapturedFrames(prev => [...prev, frameUrl]);
+                  
+                  console.log('Frame captured successfully:', frameUrl);
+                  alert('Frame captured successfully!');
+                } catch (error) {
+                  console.error('Error uploading frame:', error);
+                  alert('Failed to upload frame. Please try again.');
+                }
+              }, 'image/jpeg', 0.9);
+              
+            } catch (error) {
+              console.error('Error capturing frame:', error);
+              alert('Failed to capture frame. Please try again.');
+            }
+          };
+        } catch (error) {
+          console.error('Error seeking video:', error);
+          alert('Failed to seek to frame. Please try again.');
         }
-      }
+      };
+
+      tempVideo.onerror = () => {
+        console.error('Error loading temp video for capture');
+        alert('Failed to load video for frame capture. This may be due to CORS restrictions.');
+      };
+
     } catch (error) {
       console.error('Error setting up frame capture:', error);
-      alert('Failed to capture frame. Please try again.');
+      alert('Failed to set up frame capture. Please try again.');
     }
   };
 
@@ -476,23 +479,15 @@ export default function EditVideoPage() {
               }}>
                 <button
                   type="button"
-                  onClick={generateThumbnailsFromVideo}
-                  className="btn btn--secondary"
-                  disabled={!videoReady}
-                >
-                  🎬 Generate Thumbnails
-                </button>
-                <button
-                  type="button"
                   onClick={captureFrame}
-                  className="btn btn--ghost"
+                  className="btn btn--primary"
                   disabled={!videoReady}
                 >
-                  📸 Try Frame Capture
+                  📸 Capture Current Frame
                 </button>
                 <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)' }}>
                   {videoReady 
-                    ? "Generate multiple thumbnail options from your video"
+                    ? "Scrub to the perfect frame and click 'Capture Current Frame' to create a thumbnail"
                     : "Loading video... Please wait"
                   }
                 </p>
