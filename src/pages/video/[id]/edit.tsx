@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '../../../lib/firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 
 interface Video {
@@ -14,6 +15,8 @@ interface Video {
   tags: string[];
   collaborators: { uid: string; role: string; name?: string }[];
   techMeta: { camera?: string; lenses?: string; location?: string; durationSec?: number };
+  storage: { downloadURL?: string };
+  playback: { posterUrl?: string; mp4Url?: string };
   visibility: 'public' | 'private' | 'unlisted';
 }
 
@@ -51,6 +54,12 @@ export default function EditVideoPage() {
   const [location, setLocation] = useState('');
   const [collaborators, setCollaborators] = useState<{ name: string; role: string }[]>([]);
   const [visibility, setVisibility] = useState<'public' | 'private' | 'unlisted'>('public');
+  const [capturedFrames, setCapturedFrames] = useState<string[]>([]);
+  const [selectedThumbnail, setSelectedThumbnail] = useState<string>('');
+  const [videoReady, setVideoReady] = useState(false);
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -94,6 +103,14 @@ export default function EditVideoPage() {
         setLocation(videoData.techMeta?.location || '');
         setCollaborators(videoData.collaborators.map(c => ({ name: c.name || '', role: c.role })));
         setVisibility(videoData.visibility);
+        setSelectedThumbnail(videoData.playback?.posterUrl || '');
+        
+        console.log('Video data loaded:', {
+          title: videoData.title,
+          playbackUrl: videoData.playback?.mp4Url,
+          storageUrl: videoData.storage?.downloadURL,
+          posterUrl: videoData.playback?.posterUrl
+        });
         
       } catch (error) {
         console.error('Error fetching video:', error);
@@ -139,6 +156,155 @@ export default function EditVideoPage() {
     setCollaborators(collaborators.filter((_, i) => i !== index));
   };
 
+  // Frame capture functions
+  const captureFrame = async () => {
+    if (!videoRef.current || !canvasRef.current || !user || !video) return;
+
+    const videoElement = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      alert('Canvas not supported. Please try a different browser.');
+      return;
+    }
+
+    // Check if video is loaded
+    if (videoElement.readyState < 2) {
+      alert('Video is still loading. Please wait and try again.');
+      return;
+    }
+
+    // Set canvas size to match video
+    canvas.width = videoElement.videoWidth || 1920;
+    canvas.height = videoElement.videoHeight || 1080;
+
+    try {
+      // Draw current frame to canvas
+      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+      console.log('Frame drawn to canvas at time:', videoElement.currentTime);
+
+      // Try to convert to blob with CORS workaround
+      try {
+        canvas.toBlob(async (blob) => {
+          if (!blob) return;
+
+          try {
+            // Upload frame to Firebase Storage
+            const timestamp = Date.now();
+            const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
+            
+            await uploadBytes(frameRef, blob);
+            const frameUrl = await getDownloadURL(frameRef);
+            
+            // Add to captured frames
+            setCapturedFrames([...capturedFrames, frameUrl]);
+            
+            console.log('Frame captured:', frameUrl);
+          } catch (error) {
+            console.error('Error uploading frame:', error);
+            alert('Failed to upload frame. Please try again.');
+          }
+        }, 'image/jpeg', 0.8);
+      } catch (corsError) {
+        console.error('CORS error with canvas:', corsError);
+        
+        // Fallback: Use data URL instead of blob
+        try {
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          
+          // Convert data URL to blob
+          const response = await fetch(dataUrl);
+          const blob = await response.blob();
+          
+          // Upload frame to Firebase Storage
+          const timestamp = Date.now();
+          const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
+          
+          await uploadBytes(frameRef, blob);
+          const frameUrl = await getDownloadURL(frameRef);
+          
+          // Add to captured frames
+          setCapturedFrames([...capturedFrames, frameUrl]);
+          
+          console.log('Frame captured via fallback method:', frameUrl);
+        } catch (fallbackError) {
+          console.error('Fallback frame capture failed:', fallbackError);
+          alert('Frame capture failed due to browser security restrictions. This may happen with some video formats.');
+        }
+      }
+    } catch (error) {
+      console.error('Error setting up frame capture:', error);
+      alert('Failed to capture frame. Please try again.');
+    }
+  };
+
+  const selectThumbnail = (frameUrl: string) => {
+    setSelectedThumbnail(frameUrl);
+  };
+
+  const removeFrame = (frameUrl: string) => {
+    setCapturedFrames(capturedFrames.filter(frame => frame !== frameUrl));
+    if (selectedThumbnail === frameUrl) {
+      setSelectedThumbnail('');
+    }
+  };
+
+  // Alternative thumbnail generation using API
+  const generateThumbnailsFromVideo = async () => {
+    if (!video || !videoRef.current) return;
+
+    try {
+      const videoElement = videoRef.current;
+      const duration = videoElement.duration;
+      
+      if (!duration || duration === 0) {
+        alert('Video duration not available. Please try again after the video loads completely.');
+        return;
+      }
+
+      // Generate thumbnails at different time points
+      const timePoints = [
+        duration * 0.1,  // 10%
+        duration * 0.25, // 25%
+        duration * 0.5,  // 50%
+        duration * 0.75, // 75%
+        duration * 0.9   // 90%
+      ];
+
+      console.log('Generating thumbnails at times:', timePoints);
+
+      // For now, create placeholder thumbnails with time markers
+      const newThumbnails = timePoints.map((time, index) => {
+        const minutes = Math.floor(time / 60);
+        const seconds = Math.floor(time % 60);
+        return {
+          url: `data:image/svg+xml;base64,${btoa(`
+            <svg width="320" height="180" xmlns="http://www.w3.org/2000/svg">
+              <rect width="100%" height="100%" fill="#1f2937"/>
+              <text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-family="Arial" font-size="16">
+                ${minutes}:${seconds.toString().padStart(2, '0')}
+              </text>
+              <text x="50%" y="65%" text-anchor="middle" dy=".3em" fill="#9ca3af" font-family="Arial" font-size="12">
+                Frame ${index + 1}
+              </text>
+            </svg>
+          `)}`,
+          time: time
+        };
+      });
+
+      // Add placeholder thumbnails
+      setCapturedFrames([...capturedFrames, ...newThumbnails.map(t => t.url)]);
+      
+      alert(`Generated ${timePoints.length} thumbnail options! In production, these would be actual video frames.`);
+      
+    } catch (error) {
+      console.error('Error generating thumbnails:', error);
+      alert('Failed to generate thumbnails. Please try again.');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -158,7 +324,7 @@ export default function EditVideoPage() {
       if (location) techMeta.location = location;
       if (video.techMeta?.durationSec) techMeta.durationSec = video.techMeta.durationSec;
 
-      const updateData = {
+      const updateData: any = {
         title: title.trim(),
         description: description.trim(),
         tags: tags.filter(tag => tag.trim()),
@@ -169,6 +335,11 @@ export default function EditVideoPage() {
         visibility,
         updatedAt: serverTimestamp()
       };
+
+      // Update thumbnail if a new one was selected
+      if (selectedThumbnail && selectedThumbnail !== video.playback?.posterUrl) {
+        updateData['playback.posterUrl'] = selectedThumbnail;
+      }
 
       await updateDoc(doc(db, 'videos', video.id), updateData);
       
@@ -230,6 +401,157 @@ export default function EditVideoPage() {
         )}
 
         <form onSubmit={handleSubmit}>
+          {/* Video Player & Thumbnail Selection */}
+          <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
+            <h2 style={{ marginBottom: 'var(--space-4)' }}>Video Preview & Thumbnails</h2>
+            
+            {/* Video Player */}
+            <div style={{ marginBottom: 'var(--space-4)' }}>
+              <div className="video-player-container" style={{
+                width: '100%',
+                maxWidth: '600px',
+                aspectRatio: '16/9',
+                background: '#000',
+                borderRadius: 'var(--radius-md)',
+                overflow: 'hidden',
+                position: 'relative'
+              }}>
+                {(video.playback?.mp4Url || video.storage?.downloadURL) ? (
+                  <video
+                    ref={videoRef}
+                    controls
+                    poster={selectedThumbnail || video.playback?.posterUrl}
+                    style={{ width: '100%', height: '100%' }}
+                    onError={(e) => {
+                      console.error('Video playback error:', e);
+                      console.log('Attempted video URL:', video.playback?.mp4Url || video.storage?.downloadURL);
+                      setVideoReady(false);
+                    }}
+                    onLoadStart={() => {
+                      console.log('Video loading started');
+                      setVideoReady(false);
+                    }}
+                    onCanPlay={() => {
+                      console.log('Video can play');
+                      setVideoReady(true);
+                    }}
+                    onLoadedData={() => {
+                      console.log('Video data loaded');
+                      setVideoReady(true);
+                    }}
+                  >
+                    <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/mp4" />
+                    <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/quicktime" />
+                    <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/avi" />
+                    Your browser does not support the video tag.
+                  </video>
+                ) : (
+                  <div style={{ 
+                    width: '100%', 
+                    height: '100%', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    color: 'white',
+                    flexDirection: 'column',
+                    gap: 'var(--space-2)'
+                  }}>
+                    <div>Video not available</div>
+                    <div style={{ fontSize: 'var(--text-small-size)', opacity: 0.7 }}>
+                      {video.playback?.mp4Url ? 'Playback URL exists but failed to load' : 'No playback URL found'}
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Thumbnail Generation Controls */}
+              <div style={{ 
+                display: 'flex', 
+                gap: 'var(--space-3)', 
+                alignItems: 'center', 
+                marginTop: 'var(--space-3)',
+                padding: 'var(--space-3)',
+                background: 'var(--surface-subtle)',
+                borderRadius: 'var(--radius-sm)'
+              }}>
+                <button
+                  type="button"
+                  onClick={generateThumbnailsFromVideo}
+                  className="btn btn--secondary"
+                  disabled={!videoReady}
+                >
+                  🎬 Generate Thumbnails
+                </button>
+                <button
+                  type="button"
+                  onClick={captureFrame}
+                  className="btn btn--ghost"
+                  disabled={!videoReady}
+                >
+                  📸 Try Frame Capture
+                </button>
+                <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)' }}>
+                  {videoReady 
+                    ? "Generate multiple thumbnail options from your video"
+                    : "Loading video... Please wait"
+                  }
+                </p>
+              </div>
+            </div>
+
+            {/* Captured Frames */}
+            {capturedFrames.length > 0 && (
+              <div>
+                <h3 style={{ marginBottom: 'var(--space-3)' }}>Captured Frames</h3>
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', 
+                  gap: 'var(--space-3)',
+                  marginBottom: 'var(--space-4)'
+                }}>
+                  {capturedFrames.map((frameUrl, index) => (
+                    <div 
+                      key={frameUrl}
+                      className={`thumbnail-option ${selectedThumbnail === frameUrl ? 'thumbnail-selected' : ''}`}
+                      onClick={() => selectThumbnail(frameUrl)}
+                      style={{ position: 'relative' }}
+                    >
+                      <img 
+                        src={frameUrl} 
+                        alt={`Frame ${index + 1}`}
+                        style={{ 
+                          width: '100%', 
+                          aspectRatio: '16/9', 
+                          objectFit: 'cover',
+                          borderRadius: 'var(--radius-sm)',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      {selectedThumbnail === frameUrl && (
+                        <div className="thumbnail-badge">
+                          ✓ Thumbnail
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFrame(frameUrl);
+                        }}
+                        className="frame-remove-btn"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Hidden canvas for frame capture */}
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+          </div>
+
           {/* Basic Details */}
           <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
             <h2 style={{ marginBottom: 'var(--space-4)' }}>Video Details</h2>

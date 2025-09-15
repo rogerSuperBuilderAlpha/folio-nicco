@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
-import { collection, query, where, getDocs, orderBy, doc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, doc, deleteDoc, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../lib/firebase';
 
@@ -17,6 +17,16 @@ interface Video {
   techMeta: { camera?: string; lenses?: string; location?: string; durationSec?: number };
   playback: { provider: string; id: string; posterUrl?: string; mp4Url?: string };
   visibility: 'public' | 'private' | 'unlisted';
+  folderId?: string; // Optional folder assignment
+  createdAt: any;
+  updatedAt: any;
+}
+
+interface Folder {
+  id: string;
+  ownerUid: string;
+  name: string;
+  color?: string;
   createdAt: any;
   updatedAt: any;
 }
@@ -25,9 +35,14 @@ export default function DashboardPage() {
   const router = useRouter();
   const { user, profile, loading: authLoading } = useAuth();
   const [videos, setVideos] = useState<Video[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'public' | 'private' | 'unlisted'>('all');
+  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [shareModalVideo, setShareModalVideo] = useState<Video | null>(null);
+  const [showCreateFolder, setShowCreateFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [draggedVideo, setDraggedVideo] = useState<string | null>(null);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -68,9 +83,28 @@ export default function DashboardPage() {
         
         console.log('Videos found:', videosData);
         setVideos(videosData);
+
+        // Fetch user's folders
+        const foldersRef = collection(db, 'folders');
+        const foldersQuery = query(
+          foldersRef,
+          where('ownerUid', '==', user.uid),
+          orderBy('createdAt', 'desc')
+        );
+        
+        const foldersSnapshot = await getDocs(foldersQuery);
+        const foldersData = foldersSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Folder[];
+        
+        console.log('Folders found:', foldersData);
+        setFolders(foldersData);
+
       } catch (error) {
-        console.error('Error fetching videos:', error);
+        console.error('Error fetching data:', error);
         setVideos([]);
+        setFolders([]);
       } finally {
         setLoading(false);
       }
@@ -87,9 +121,21 @@ export default function DashboardPage() {
     );
   }
 
-  const filteredVideos = videos.filter(video => 
-    filter === 'all' || video.visibility === filter
-  );
+  const filteredVideos = videos.filter(video => {
+    // Filter by folder
+    let inCorrectFolder = true;
+    if (currentFolder === 'unorganized') {
+      inCorrectFolder = !video.folderId; // Show only unorganized videos
+    } else if (currentFolder) {
+      inCorrectFolder = video.folderId === currentFolder; // Show videos in specific folder
+    }
+    // If currentFolder is null, show ALL videos (no folder filtering)
+    
+    // Filter by visibility
+    const matchesVisibility = filter === 'all' || video.visibility === filter;
+    
+    return inCorrectFolder && matchesVisibility;
+  });
 
   const stats = {
     totalVideos: videos.length,
@@ -147,6 +193,68 @@ export default function DashboardPage() {
     }
   };
 
+  // Folder management functions
+  const createFolder = async () => {
+    if (!newFolderName.trim() || !user) return;
+
+    try {
+      const folderData = {
+        ownerUid: user.uid,
+        name: newFolderName.trim(),
+        color: '#10B981', // Default emerald color
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      const docRef = await addDoc(collection(db, 'folders'), folderData);
+      
+      // Add to local state
+      setFolders([{ id: docRef.id, ...folderData }, ...folders]);
+      setNewFolderName('');
+      setShowCreateFolder(false);
+      
+    } catch (error) {
+      console.error('Error creating folder:', error);
+      alert('Failed to create folder. Please try again.');
+    }
+  };
+
+  // Drag and drop functions
+  const handleDragStart = (videoId: string) => {
+    setDraggedVideo(videoId);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (e: React.DragEvent, folderId: string | null) => {
+    e.preventDefault();
+    
+    if (!draggedVideo || !user) return;
+
+    try {
+      // Update video's folder assignment
+      await updateDoc(doc(db, 'videos', draggedVideo), {
+        folderId: folderId || null,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      setVideos(videos.map(video => 
+        video.id === draggedVideo 
+          ? { ...video, folderId: folderId || undefined }
+          : video
+      ));
+
+      setDraggedVideo(null);
+      
+    } catch (error) {
+      console.error('Error moving video to folder:', error);
+      alert('Failed to move video. Please try again.');
+    }
+  };
+
   return (
     <>
       <Head>
@@ -154,83 +262,171 @@ export default function DashboardPage() {
         <meta name="description" content="Manage your video portfolio and track performance" />
       </Head>
       
-      <div className="container" style={{ paddingTop: 'var(--space-8)', paddingBottom: 'var(--space-8)' }}>
-            {/* Welcome Header */}
-            <div style={{ marginBottom: 'var(--space-8)' }}>
-              <h1 style={{ marginBottom: 'var(--space-2)' }}>Welcome back, {profile.displayName}</h1>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '18px' }}>
-                Manage your videos and track your portfolio performance
+      <div className="dashboard-layout">
+        {/* Sidebar */}
+        <aside className="dashboard-sidebar">
+          {/* Welcome Header */}
+          <div style={{ marginBottom: 'var(--space-6)' }}>
+            <h1 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-h3-size)' }}>Welcome back</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)', margin: 0 }}>
+              {profile.displayName}
+            </p>
+          </div>
+
+          {/* Quick Stats */}
+          <div className="sidebar-stats" style={{ marginBottom: 'var(--space-6)' }}>
+            <div className="sidebar-stat">
+              <span className="stat-number">{stats.totalVideos}</span>
+              <span className="stat-label">Videos</span>
+            </div>
+            <div className="sidebar-stat">
+              <span className="stat-number">{folders.length}</span>
+              <span className="stat-label">Folders</span>
+            </div>
+          </div>
+
+          {/* Folders List */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <h3 style={{ margin: 0, fontSize: 'var(--text-body-size)', fontWeight: 600 }}>Library</h3>
+              <button 
+                onClick={() => setShowCreateFolder(true)}
+                className="btn btn--ghost"
+                style={{ padding: 'var(--space-1) var(--space-2)', height: 'auto', fontSize: 'var(--text-small-size)' }}
+              >
+                + New
+              </button>
+            </div>
+
+            {/* Create Folder Form */}
+            {showCreateFolder && (
+              <div style={{ 
+                marginBottom: 'var(--space-4)', 
+                padding: 'var(--space-3)', 
+                background: 'var(--surface-subtle)', 
+                borderRadius: 'var(--radius-sm)' 
+              }}>
+                <input
+                  type="text"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && createFolder()}
+                  className="input"
+                  placeholder="Folder name"
+                  autoFocus
+                  style={{ marginBottom: 'var(--space-2)' }}
+                />
+                <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                  <button onClick={createFolder} className="btn btn--primary" style={{ flex: 1, fontSize: 'var(--text-small-size)' }}>
+                    Create
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowCreateFolder(false);
+                      setNewFolderName('');
+                    }} 
+                    className="btn btn--ghost"
+                    style={{ fontSize: 'var(--text-small-size)' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Folders List */}
+            <div className="folders-list">
+              {/* All Videos */}
+              <div
+                className={`folder-list-item ${!currentFolder ? 'folder-list-item--active' : ''}`}
+                onClick={() => setCurrentFolder(null)}
+              >
+                <div className="folder-list-icon">📁</div>
+                <div className="folder-list-content">
+                  <div className="folder-list-name">All Videos</div>
+                  <div className="folder-list-count">{videos.length} videos</div>
+                </div>
+              </div>
+
+              {/* Unorganized Videos */}
+              <div
+                className={`folder-list-item ${currentFolder === 'unorganized' ? 'folder-list-item--active' : ''}`}
+                onClick={() => setCurrentFolder('unorganized')}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, null)}
+              >
+                <div className="folder-list-icon">📂</div>
+                <div className="folder-list-content">
+                  <div className="folder-list-name">Unorganized</div>
+                  <div className="folder-list-count">{videos.filter(v => !v.folderId).length} videos</div>
+                </div>
+              </div>
+
+              {/* User Folders */}
+              {folders.map((folder) => (
+                <div
+                  key={folder.id}
+                  className={`folder-list-item ${currentFolder === folder.id ? 'folder-list-item--active' : ''}`}
+                  onClick={() => setCurrentFolder(folder.id)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, folder.id)}
+                >
+                  <div className="folder-list-icon" style={{ color: folder.color }}>📁</div>
+                  <div className="folder-list-content">
+                    <div className="folder-list-name">{folder.name}</div>
+                    <div className="folder-list-count">{videos.filter(v => v.folderId === folder.id).length} videos</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <main className="dashboard-main">
+          {/* Content Header */}
+          <div className="content-header">
+            <div>
+              <h1 style={{ margin: 0, fontSize: 'var(--text-h2-size)' }}>
+                {currentFolder 
+                  ? folders.find(f => f.id === currentFolder)?.name || 'Folder'
+                  : 'All Videos'
+                }
+              </h1>
+              <p style={{ margin: 'var(--space-1) 0 0', color: 'var(--text-secondary)' }}>
+                {currentFolder 
+                  ? `${filteredVideos.length} videos in this folder`
+                  : `${filteredVideos.length} videos • Drag videos into folders to organize`
+                }
               </p>
             </div>
-
-            {/* Stats Overview */}
-            <div className="dashboard-stats" style={{ marginBottom: 'var(--space-8)' }}>
-              <div className="stat-card">
-                <div className="stat-icon">🎬</div>
-                <div className="stat-content">
-                  <div className="stat-number">{stats.totalVideos}</div>
-                  <div className="stat-label">Total Videos</div>
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-icon">👁️</div>
-                <div className="stat-content">
-                  <div className="stat-number">{stats.publicVideos}</div>
-                  <div className="stat-label">Public Videos</div>
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-icon">📊</div>
-                <div className="stat-content">
-                  <div className="stat-number">0</div>
-                  <div className="stat-label">Total Views</div>
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-icon">💾</div>
-                <div className="stat-content">
-                  <div className="stat-number">0 GB</div>
-                  <div className="stat-label">Storage Used</div>
-                </div>
-              </div>
+            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+              <Link href="/upload" className="btn btn--primary">
+                + Upload Video
+              </Link>
             </div>
+          </div>
 
-            {/* Video Library Section */}
-            <div className="card">
-              <div className="dashboard-section-header">
-                <div>
-                  <h2 style={{ margin: 0 }}>Video Library</h2>
-                  <p style={{ margin: 'var(--space-1) 0 0', color: 'var(--text-secondary)' }}>
-                    Manage all your videos in one place
-                  </p>
-                </div>
-                <Link href="/upload" className="btn btn--primary">
-                  + Upload Video
-                </Link>
-              </div>
+          {/* Filters */}
+          <div className="video-filters" style={{ marginBottom: 'var(--space-6)' }}>
+            <div className="filter-buttons">
+              {(['all', 'public', 'private', 'unlisted'] as const).map((filterOption) => (
+                <button
+                  key={filterOption}
+                  onClick={() => setFilter(filterOption)}
+                  className={`filter-btn ${filter === filterOption ? 'filter-btn--active' : ''}`}
+                >
+                  {filterOption === 'all' ? 'All' : filterOption.charAt(0).toUpperCase() + filterOption.slice(1)}
+                  <span className="filter-count">
+                    {filterOption === 'all' ? filteredVideos.length : 
+                     filteredVideos.filter(v => v.visibility === filterOption).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-              {/* Filters */}
-              <div className="video-filters" style={{ marginBottom: 'var(--space-6)' }}>
-                <div className="filter-buttons">
-                  {(['all', 'public', 'private', 'unlisted'] as const).map((filterOption) => (
-                    <button
-                      key={filterOption}
-                      onClick={() => setFilter(filterOption)}
-                      className={`filter-btn ${filter === filterOption ? 'filter-btn--active' : ''}`}
-                    >
-                      {filterOption === 'all' ? 'All' : filterOption.charAt(0).toUpperCase() + filterOption.slice(1)}
-                      <span className="filter-count">
-                        {filterOption === 'all' ? stats.totalVideos : 
-                         filterOption === 'public' ? stats.publicVideos :
-                         filterOption === 'private' ? stats.privateVideos :
-                         stats.unlistedVideos}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Video Grid */}
+          {/* Video Grid */}
               {loading ? (
                 <div style={{ textAlign: 'center', padding: 'var(--space-8)' }}>
                   <div>Loading your videos...</div>
@@ -238,7 +434,12 @@ export default function DashboardPage() {
               ) : filteredVideos.length > 0 ? (
                 <div className="dashboard-video-grid">
                   {filteredVideos.map((video) => (
-                    <div key={video.id} className="dashboard-video-card">
+                    <div 
+                      key={video.id} 
+                      className="dashboard-video-card"
+                      draggable
+                      onDragStart={() => handleDragStart(video.id)}
+                    >
                       <div className="video-thumbnail">
                         {video.playback?.posterUrl ? (
                           <img src={video.playback.posterUrl} alt={video.title} />
@@ -323,7 +524,7 @@ export default function DashboardPage() {
                   </Link>
                 </div>
               )}
-            </div>
+        </main>
       </div>
 
       {/* Share Modal */}
