@@ -4,21 +4,24 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 
 // Initialize Firebase Admin if not already initialized
+let app
 if (!getApps().length) {
-  initializeApp({
+  app = initializeApp({
     credential: cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
   })
+} else {
+  app = getApps()[0]
 }
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2024-06-20',
 })
 
-const db = getFirestore(undefined, 'folio-nicco')
+const db = getFirestore(app, 'folio-nicco')
 
 export const config = {
   api: {
