@@ -340,9 +340,13 @@ export default function EditVideoPage() {
     setAwards([...awards, { name: '', category: '', year: '', status: 'nominee' }]);
   };
 
-  const updateAward = (index: number, field: 'name' | 'category' | 'year' | 'status', value: string) => {
+  const updateAward = (index: number, field: 'name' | 'category' | 'year' | 'status', value: string | 'winner' | 'nominee' | 'finalist') => {
     const newAwards = [...awards];
-    newAwards[index][field] = value;
+    if (field === 'status') {
+      newAwards[index][field] = value as 'winner' | 'nominee' | 'finalist';
+    } else {
+      newAwards[index][field] = value as string;
+    }
     setAwards(newAwards);
   };
 
