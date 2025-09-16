@@ -545,50 +545,54 @@ export default function DashboardPage() {
                       draggable
                       onDragStart={() => handleDragStart(video.id)}
                     >
-                      <div className="video-thumbnail">
-                        {video.playback?.posterUrl ? (
-                          <img src={video.playback.posterUrl} alt={video.title} />
-                        ) : (
-                          <div className="thumbnail-placeholder">
-                            <div className="play-icon">🎬</div>
-                          </div>
-                        )}
-                        <div className="video-overlay">
-                          <div className="video-actions">
-                            <button 
-                              className="action-btn" 
-                              title="Edit Video"
-                              onClick={() => handleEditVideo(video.id)}
-                            >
-                              ✏️
-                            </button>
-                            <button 
-                              className="action-btn" 
-                              title="Share Video"
-                              onClick={() => handleShareVideo(video)}
-                            >
-                              🔗
-                            </button>
-                            <button 
-                              className="action-btn" 
-                              title="View Analytics"
-                              onClick={() => handleViewAnalytics(video.id)}
-                            >
-                              📊
-                            </button>
-                            <button 
-                              className="action-btn" 
-                              title="Delete Video"
-                              onClick={() => handleDeleteVideo(video.id, video.title)}
-                              style={{ background: 'var(--danger)' }}
-                            >
-                              🗑️
-                            </button>
-                          </div>
+                      <Link href={`/video/${video.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        <div className="video-thumbnail" style={{ cursor: 'pointer' }}>
+                          {video.playback?.posterUrl ? (
+                            <img src={video.playback.posterUrl} alt={video.title} />
+                          ) : (
+                            <div className="thumbnail-placeholder">
+                              <div className="play-icon">🎬</div>
+                            </div>
+                          )}
+                        </div>
+                      </Link>
+                      <div className="video-overlay">
+                        <div className="video-actions">
+                          <button 
+                            className="action-btn" 
+                            title="Edit Video"
+                            onClick={() => handleEditVideo(video.id)}
+                          >
+                            ✏️
+                          </button>
+                          <button 
+                            className="action-btn" 
+                            title="Share Video"
+                            onClick={() => handleShareVideo(video)}
+                          >
+                            🔗
+                          </button>
+                          <button 
+                            className="action-btn" 
+                            title="View Analytics"
+                            onClick={() => handleViewAnalytics(video.id)}
+                          >
+                            📊
+                          </button>
+                          <button 
+                            className="action-btn" 
+                            title="Delete Video"
+                            onClick={() => handleDeleteVideo(video.id, video.title)}
+                            style={{ background: 'var(--danger)' }}
+                          >
+                            🗑️
+                          </button>
                         </div>
                       </div>
                       <div className="video-details">
-                        <h4 className="video-title">{video.title}</h4>
+                        <Link href={`/video/${video.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                          <h4 className="video-title" style={{ cursor: 'pointer' }}>{video.title}</h4>
+                        </Link>
                         <div className="video-meta">
                           <span className={`visibility-badge visibility-badge--${video.visibility}`}>
                             {video.visibility}

@@ -14,7 +14,28 @@ interface Video {
   description: string;
   tags: string[];
   collaborators: { uid: string; role: string; name?: string }[];
-  techMeta: { camera?: string; lenses?: string; location?: string; durationSec?: number };
+  credits: {
+    aboveLine: { name: string; role: string }[];
+    belowLine: { name: string; role: string }[];
+  };
+  talent: {
+    lead: { name: string; role: string }[];
+    supporting: { name: string; role: string }[];
+  };
+  vendors: { name: string; type: string; description?: string }[];
+  awards: { name: string; category?: string; year?: number; status: 'winner' | 'nominee' | 'finalist' }[];
+  techMeta: { 
+    camera?: string; 
+    lenses?: string; 
+    location?: string; 
+    durationSec?: number;
+    resolution?: string;
+    frameRate?: string;
+    codec?: string;
+    colorProfile?: string;
+  };
+  releaseDate?: string;
+  notes?: string;
   storage: { path: string; sizeBytes: number; downloadURL?: string };
   playback: { provider: string; id: string; posterUrl?: string; mp4Url?: string };
   visibility: 'public' | 'private' | 'unlisted';
@@ -293,7 +314,7 @@ export default function VideoPage() {
             )}
 
             {/* Technical Details */}
-            {(video.techMeta?.camera || video.techMeta?.lenses || video.techMeta?.location) && (
+            {(video.techMeta?.camera || video.techMeta?.lenses || video.techMeta?.location || video.techMeta?.resolution || video.techMeta?.frameRate || video.techMeta?.codec || video.techMeta?.colorProfile) && (
               <div style={{ marginBottom: 'var(--space-6)' }}>
                 <h3 style={{ marginBottom: 'var(--space-3)' }}>Technical Details</h3>
                 <div className="card" style={{ background: 'var(--surface-subtle)' }}>
@@ -312,6 +333,26 @@ export default function VideoPage() {
                       <strong>Location:</strong> {video.techMeta.location}
                     </div>
                   )}
+                  {video.techMeta.resolution && (
+                    <div style={{ marginBottom: 'var(--space-2)' }}>
+                      <strong>Resolution:</strong> {video.techMeta.resolution}
+                    </div>
+                  )}
+                  {video.techMeta.frameRate && (
+                    <div style={{ marginBottom: 'var(--space-2)' }}>
+                      <strong>Frame Rate:</strong> {video.techMeta.frameRate}
+                    </div>
+                  )}
+                  {video.techMeta.codec && (
+                    <div style={{ marginBottom: 'var(--space-2)' }}>
+                      <strong>Codec:</strong> {video.techMeta.codec}
+                    </div>
+                  )}
+                  {video.techMeta.colorProfile && (
+                    <div style={{ marginBottom: 'var(--space-2)' }}>
+                      <strong>Color Profile:</strong> {video.techMeta.colorProfile}
+                    </div>
+                  )}
                   {video.techMeta.durationSec && (
                     <div>
                       <strong>Duration:</strong> {Math.floor(video.techMeta.durationSec / 60)}:{(video.techMeta.durationSec % 60).toString().padStart(2, '0')}
@@ -322,9 +363,9 @@ export default function VideoPage() {
             )}
 
             {/* Collaborators */}
-            {video.collaborators.length > 0 && (
-              <div>
-                <h3 style={{ marginBottom: 'var(--space-3)' }}>Collaborators</h3>
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)' }}>Collaborators</h3>
+              {video.collaborators && video.collaborators.length > 0 ? (
                 <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
                   {video.collaborators.map((collaborator, index) => (
                     <div key={index} style={{ display: 'flex', justifyContent: 'space-between', padding: 'var(--space-2) 0' }}>
@@ -333,8 +374,213 @@ export default function VideoPage() {
                     </div>
                   ))}
                 </div>
+              ) : (
+                <div className="card" style={{ background: 'var(--surface-subtle)', textAlign: 'center', padding: 'var(--space-4)' }}>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    No collaborators listed for this project
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Credits */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)' }}>Credits</h3>
+              <div className="card" style={{ background: 'var(--surface-subtle)' }}>
+                {/* Above the Line */}
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <h4 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-base-size)', color: 'var(--text-secondary)' }}>Above the Line</h4>
+                  {video.credits?.aboveLine?.length > 0 ? (
+                    <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+                      {video.credits.aboveLine.map((credit, index) => (
+                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{credit.name}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{credit.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: 'var(--text-small-size)' }}>
+                      No above the line credits added
+                    </p>
+                  )}
+                </div>
+
+                {/* Below the Line */}
+                <div>
+                  <h4 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-base-size)', color: 'var(--text-secondary)' }}>Below the Line</h4>
+                  {video.credits?.belowLine?.length > 0 ? (
+                    <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+                      {video.credits.belowLine.map((credit, index) => (
+                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{credit.name}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{credit.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: 'var(--text-small-size)' }}>
+                      No below the line credits added
+                    </p>
+                  )}
+                </div>
               </div>
-            )}
+            </div>
+
+            {/* Talent */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)' }}>Talent</h3>
+              <div className="card" style={{ background: 'var(--surface-subtle)' }}>
+                {/* Lead Talent */}
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <h4 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-base-size)', color: 'var(--text-secondary)' }}>Lead</h4>
+                  {video.talent?.lead?.length > 0 ? (
+                    <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+                      {video.talent.lead.map((person, index) => (
+                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{person.name}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{person.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: 'var(--text-small-size)' }}>
+                      No lead talent listed
+                    </p>
+                  )}
+                </div>
+
+                {/* Supporting Talent */}
+                <div>
+                  <h4 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-base-size)', color: 'var(--text-secondary)' }}>Supporting</h4>
+                  {video.talent?.supporting?.length > 0 ? (
+                    <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+                      {video.talent.supporting.map((person, index) => (
+                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{person.name}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{person.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: 'var(--text-small-size)' }}>
+                      No supporting talent listed
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Vendors */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)' }}>Vendors</h3>
+              {video.vendors && video.vendors.length > 0 ? (
+                <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
+                  {video.vendors.map((vendor, index) => (
+                    <div key={index} className="card" style={{ background: 'var(--surface-subtle)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-1)' }}>
+                        <span style={{ fontWeight: 600 }}>{vendor.name}</span>
+                        <span style={{ 
+                          color: 'var(--text-secondary)', 
+                          fontSize: 'var(--text-small-size)',
+                          padding: 'var(--space-1) var(--space-2)',
+                          background: 'var(--surface-default)',
+                          borderRadius: 'var(--radius-sm)'
+                        }}>
+                          {vendor.type}
+                        </span>
+                      </div>
+                      {vendor.description && (
+                        <p style={{ margin: 0, fontSize: 'var(--text-small-size)', color: 'var(--text-secondary)' }}>
+                          {vendor.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="card" style={{ background: 'var(--surface-subtle)', textAlign: 'center', padding: 'var(--space-4)' }}>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    No vendors listed for this project
+                  </p>
+                  <p style={{ margin: 'var(--space-2) 0 0 0', fontSize: 'var(--text-small-size)', color: 'var(--text-secondary)' }}>
+                    Production companies, post houses, equipment rental, and other service providers will appear here
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Awards */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)' }}>Awards & Recognition</h3>
+              {video.awards && video.awards.length > 0 ? (
+                <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
+                  {video.awards.map((award, index) => (
+                    <div key={index} className="card" style={{ background: 'var(--surface-subtle)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-1)' }}>
+                        <span style={{ fontWeight: 600 }}>{award.name}</span>
+                        <span style={{ 
+                          color: award.status === 'winner' ? 'var(--success)' : award.status === 'nominee' ? 'var(--warning)' : 'var(--interactive)',
+                          fontSize: 'var(--text-small-size)',
+                          padding: 'var(--space-1) var(--space-2)',
+                          background: award.status === 'winner' ? 'color-mix(in srgb, var(--success), transparent 90%)' : 
+                                     award.status === 'nominee' ? 'color-mix(in srgb, var(--warning), transparent 90%)' :
+                                     'color-mix(in srgb, var(--interactive), transparent 90%)',
+                          borderRadius: 'var(--radius-sm)',
+                          textTransform: 'capitalize'
+                        }}>
+                          {award.status}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 'var(--space-4)', fontSize: 'var(--text-small-size)', color: 'var(--text-secondary)' }}>
+                        {award.category && <span><strong>Category:</strong> {award.category}</span>}
+                        {award.year && <span><strong>Year:</strong> {award.year}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="card" style={{ background: 'var(--surface-subtle)', textAlign: 'center', padding: 'var(--space-4)' }}>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    No awards or recognition listed
+                  </p>
+                  <p style={{ margin: 'var(--space-2) 0 0 0', fontSize: 'var(--text-small-size)', color: 'var(--text-secondary)' }}>
+                    Film festival awards, industry recognition, and other accolades will appear here
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Release Date */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)' }}>Release Information</h3>
+              <div className="card" style={{ background: 'var(--surface-subtle)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Release Date</span>
+                  {video.releaseDate ? (
+                    <span>{new Date(video.releaseDate).toLocaleDateString()}</span>
+                  ) : (
+                    <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not set</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)' }}>Production Notes</h3>
+              <div className="card" style={{ background: 'var(--surface-subtle)' }}>
+                {video.notes ? (
+                  <p style={{ margin: 0, lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+                    {video.notes}
+                  </p>
+                ) : (
+                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontStyle: 'italic', textAlign: 'center', padding: 'var(--space-2)' }}>
+                    No production notes added yet
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Sidebar */}

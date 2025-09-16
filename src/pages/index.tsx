@@ -1,9 +1,45 @@
 import Head from 'next/head'
+import { useState } from 'react'
+import { useAuth } from '../contexts/AuthContext'
 import { Hero } from '../components/Hero'
 import { Features } from '../components/Features'
 import { ClientLogos } from '../components/ClientLogos'
 
 export default function HomePage() {
+  const [loading, setLoading] = useState(false)
+  const { user } = useAuth()
+
+  const handleSubscribe = async () => {
+    if (!user) {
+      // Redirect to sign in if not authenticated
+      window.location.href = '/signin?redirect=subscribe'
+      return
+    }
+
+    setLoading(true)
+    try {
+      const token = await user.getIdToken()
+      const response = await fetch('/api/stripe/create-checkout', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      const data = await response.json()
+      
+      if (data.url) {
+        window.location.href = data.url
+      } else {
+        console.error('No checkout URL returned')
+      }
+    } catch (error) {
+      console.error('Error creating checkout session:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
   return (
     <>
       <Head>
@@ -18,45 +54,30 @@ export default function HomePage() {
           <div className="container">
             <div className="section-header">
               <h2 className="section-title">Simple, transparent pricing</h2>
-              <p className="section-subtitle">Choose the plan that fits your needs. No hidden fees, cancel anytime.</p>
+              <p className="section-subtitle">Everything you need to showcase your work professionally. Cancel anytime.</p>
             </div>
-            <div className="pricing-grid">
-              <div className="pricing-card">
-                <h3 className="pricing-title">Creator</h3>
-                <div className="pricing-price">$15<span>/month</span></div>
+            <div className="pricing-grid" style={{ justifyContent: 'center' }}>
+              <div className="pricing-card pricing-card--featured" style={{ maxWidth: '400px' }}>
+                <div className="pricing-badge">Professional Plan</div>
+                <h3 className="pricing-title">Folio Pro</h3>
+                <div className="pricing-price">$50<span>/month</span></div>
                 <ul className="pricing-features">
-                  <li>10 videos</li>
-                  <li>Basic portfolio</li>
-                  <li>HD streaming</li>
-                  <li>Email support</li>
-                </ul>
-                <button className="btn btn--secondary pricing-btn">Start free trial</button>
-              </div>
-              <div className="pricing-card pricing-card--featured">
-                <div className="pricing-badge">Most Popular</div>
-                <h3 className="pricing-title">Pro</h3>
-                <div className="pricing-price">$39<span>/month</span></div>
-                <ul className="pricing-features">
-                  <li>Unlimited videos</li>
-                  <li>Advanced portfolio</li>
-                  <li>4K streaming</li>
-                  <li>Credit automation</li>
-                  <li>Analytics</li>
-                  <li>Priority support</li>
-                </ul>
-                <button className="btn btn--primary pricing-btn">Start free trial</button>
-              </div>
-              <div className="pricing-card">
-                <h3 className="pricing-title">Team</h3>
-                <div className="pricing-price">$199<span>/month</span></div>
-                <ul className="pricing-features">
-                  <li>Everything in Pro</li>
-                  <li>Team collaboration</li>
+                  <li>Unlimited video uploads</li>
+                  <li>Professional portfolio</li>
+                  <li>4K streaming quality</li>
+                  <li>Automatic credit detection</li>
+                  <li>Advanced analytics</li>
                   <li>Custom branding</li>
-                  <li>API access</li>
-                  <li>Dedicated support</li>
+                  <li>Priority support</li>
+                  <li>Collaboration tools</li>
                 </ul>
-                <button className="btn btn--secondary pricing-btn">Contact sales</button>
+                <button 
+                  className="btn btn--primary pricing-btn" 
+                  onClick={handleSubscribe}
+                  disabled={loading}
+                >
+                  {loading ? 'Processing...' : 'Subscribe Now'}
+                </button>
               </div>
             </div>
           </div>

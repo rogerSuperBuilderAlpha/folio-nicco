@@ -558,27 +558,29 @@ export default function DiscoverPage() {
             {filteredVideos.length > 0 ? (
               <div className="video-grid">
                 {filteredVideos.map((video) => (
-                  <div key={video.id} className="video-card">
-                    <div className="video-thumbnail">
-                      {video.playback?.posterUrl ? (
-                        <img src={video.playback.posterUrl} alt={video.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <div className="play-icon">🎬</div>
-                      )}
-                    </div>
-                    <div className="video-info">
-                      <h4>{video.title}</h4>
-                      <p>
-                        {video.techMeta?.camera && `${video.techMeta.camera} • `}
-                        {video.techMeta?.durationSec && `${Math.floor(video.techMeta.durationSec / 60)}:${(video.techMeta.durationSec % 60).toString().padStart(2, '0')}`}
-                      </p>
-                      <div className="video-tags">
-                        {video.tags.slice(0, 3).map((tag) => (
-                          <span key={tag} className="tag">{tag}</span>
-                        ))}
+                  <Link key={video.id} href={`/video/${video.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                    <div className="video-card" style={{ cursor: 'pointer' }}>
+                      <div className="video-thumbnail">
+                        {video.playback?.posterUrl ? (
+                          <img src={video.playback.posterUrl} alt={video.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <div className="play-icon">🎬</div>
+                        )}
+                      </div>
+                      <div className="video-info">
+                        <h4>{video.title}</h4>
+                        <p>
+                          {video.techMeta?.camera && `${video.techMeta.camera} • `}
+                          {video.techMeta?.durationSec && `${Math.floor(video.techMeta.durationSec / 60)}:${(video.techMeta.durationSec % 60).toString().padStart(2, '0')}`}
+                        </p>
+                        <div className="video-tags">
+                          {video.tags.slice(0, 3).map((tag) => (
+                            <span key={tag} className="tag">{tag}</span>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             ) : (

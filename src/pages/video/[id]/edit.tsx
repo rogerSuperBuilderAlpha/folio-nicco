@@ -6,6 +6,7 @@ import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../../../lib/firebase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { generateVideoThumbnail, formatTime, isValidTimestamp } from '../../../lib/thumbnails';
 
 interface Video {
   id: string;
@@ -14,7 +15,28 @@ interface Video {
   description: string;
   tags: string[];
   collaborators: { uid: string; role: string; name?: string }[];
-  techMeta: { camera?: string; lenses?: string; location?: string; durationSec?: number };
+  credits: {
+    aboveLine: { name: string; role: string }[];
+    belowLine: { name: string; role: string }[];
+  };
+  talent: {
+    lead: { name: string; role: string }[];
+    supporting: { name: string; role: string }[];
+  };
+  vendors: { name: string; type: string; description?: string }[];
+  awards: { name: string; category?: string; year?: number; status: 'winner' | 'nominee' | 'finalist' }[];
+  techMeta: { 
+    camera?: string; 
+    lenses?: string; 
+    location?: string; 
+    durationSec?: number;
+    resolution?: string;
+    frameRate?: string;
+    codec?: string;
+    colorProfile?: string;
+  };
+  releaseDate?: string;
+  notes?: string;
   storage: { downloadURL?: string };
   playback: { posterUrl?: string; mp4Url?: string };
   visibility: 'public' | 'private' | 'unlisted';
@@ -30,6 +52,65 @@ const CAMERA_OPTIONS = [
   'Canon C70',
   'Canon C300',
   'Blackmagic Pocket 6K',
+  'Other'
+];
+
+const VENDOR_TYPES = [
+  'Production Company',
+  'Post-Production House',
+  'Equipment Rental',
+  'Sound Studio',
+  'VFX House',
+  'Color House',
+  'Music/Composer',
+  'Location Services',
+  'Catering',
+  'Transportation',
+  'Insurance',
+  'Legal Services',
+  'Other'
+];
+
+const RESOLUTION_OPTIONS = [
+  '4K (3840×2160)',
+  '6K (6144×3456)',
+  '8K (7680×4320)',
+  '2K (2048×1080)',
+  'HD (1920×1080)',
+  'Other'
+];
+
+const FRAME_RATE_OPTIONS = [
+  '23.98 fps',
+  '24 fps',
+  '25 fps',
+  '29.97 fps',
+  '30 fps',
+  '50 fps',
+  '59.94 fps',
+  '60 fps',
+  '120 fps',
+  'Other'
+];
+
+const CODEC_OPTIONS = [
+  'ProRes 422',
+  'ProRes 4444',
+  'RED R3D',
+  'BRAW',
+  'H.264',
+  'H.265/HEVC',
+  'DNxHD',
+  'Other'
+];
+
+const COLOR_PROFILE_OPTIONS = [
+  'Rec. 709',
+  'Rec. 2020',
+  'Log-C',
+  'S-Log3',
+  'V-Log',
+  'RED Log',
   'Other'
 ];
 
@@ -52,11 +133,24 @@ export default function EditVideoPage() {
   const [camera, setCamera] = useState('');
   const [lenses, setLenses] = useState('');
   const [location, setLocation] = useState('');
+  const [resolution, setResolution] = useState('');
+  const [frameRate, setFrameRate] = useState('');
+  const [codec, setCodec] = useState('');
+  const [colorProfile, setColorProfile] = useState('');
+  const [releaseDate, setReleaseDate] = useState('');
+  const [notes, setNotes] = useState('');
   const [collaborators, setCollaborators] = useState<{ name: string; role: string }[]>([]);
+  const [aboveLineCredits, setAboveLineCredits] = useState<{ name: string; role: string }[]>([]);
+  const [belowLineCredits, setBelowLineCredits] = useState<{ name: string; role: string }[]>([]);
+  const [leadTalent, setLeadTalent] = useState<{ name: string; role: string }[]>([]);
+  const [supportingTalent, setSupportingTalent] = useState<{ name: string; role: string }[]>([]);
+  const [vendors, setVendors] = useState<{ name: string; type: string; description: string }[]>([]);
+  const [awards, setAwards] = useState<{ name: string; category: string; year: string; status: 'winner' | 'nominee' | 'finalist' }[]>([]);
   const [visibility, setVisibility] = useState<'public' | 'private' | 'unlisted'>('public');
   const [capturedFrames, setCapturedFrames] = useState<string[]>([]);
   const [selectedThumbnail, setSelectedThumbnail] = useState<string>('');
   const [videoReady, setVideoReady] = useState(false);
+  const [thumbnailGenerating, setThumbnailGenerating] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -101,7 +195,19 @@ export default function EditVideoPage() {
         setCamera(videoData.techMeta?.camera || '');
         setLenses(videoData.techMeta?.lenses || '');
         setLocation(videoData.techMeta?.location || '');
+        setResolution(videoData.techMeta?.resolution || '');
+        setFrameRate(videoData.techMeta?.frameRate || '');
+        setCodec(videoData.techMeta?.codec || '');
+        setColorProfile(videoData.techMeta?.colorProfile || '');
+        setReleaseDate(videoData.releaseDate || '');
+        setNotes(videoData.notes || '');
         setCollaborators(videoData.collaborators.map(c => ({ name: c.name || '', role: c.role })));
+        setAboveLineCredits(videoData.credits?.aboveLine || []);
+        setBelowLineCredits(videoData.credits?.belowLine || []);
+        setLeadTalent(videoData.talent?.lead || []);
+        setSupportingTalent(videoData.talent?.supporting || []);
+        setVendors(videoData.vendors?.map(v => ({ name: v.name, type: v.type, description: v.description || '' })) || []);
+        setAwards(videoData.awards?.map(a => ({ name: a.name, category: a.category || '', year: a.year?.toString() || '', status: a.status })) || []);
         setVisibility(videoData.visibility);
         setSelectedThumbnail(videoData.playback?.posterUrl || '');
         
@@ -156,7 +262,95 @@ export default function EditVideoPage() {
     setCollaborators(collaborators.filter((_, i) => i !== index));
   };
 
-  // Real thumbnail capture using MediaRecorder API
+  // Credits management
+  const addAboveLineCredit = () => {
+    setAboveLineCredits([...aboveLineCredits, { name: '', role: '' }]);
+  };
+
+  const updateAboveLineCredit = (index: number, field: 'name' | 'role', value: string) => {
+    const newCredits = [...aboveLineCredits];
+    newCredits[index][field] = value;
+    setAboveLineCredits(newCredits);
+  };
+
+  const removeAboveLineCredit = (index: number) => {
+    setAboveLineCredits(aboveLineCredits.filter((_, i) => i !== index));
+  };
+
+  const addBelowLineCredit = () => {
+    setBelowLineCredits([...belowLineCredits, { name: '', role: '' }]);
+  };
+
+  const updateBelowLineCredit = (index: number, field: 'name' | 'role', value: string) => {
+    const newCredits = [...belowLineCredits];
+    newCredits[index][field] = value;
+    setBelowLineCredits(newCredits);
+  };
+
+  const removeBelowLineCredit = (index: number) => {
+    setBelowLineCredits(belowLineCredits.filter((_, i) => i !== index));
+  };
+
+  // Talent management
+  const addLeadTalent = () => {
+    setLeadTalent([...leadTalent, { name: '', role: '' }]);
+  };
+
+  const updateLeadTalent = (index: number, field: 'name' | 'role', value: string) => {
+    const newTalent = [...leadTalent];
+    newTalent[index][field] = value;
+    setLeadTalent(newTalent);
+  };
+
+  const removeLeadTalent = (index: number) => {
+    setLeadTalent(leadTalent.filter((_, i) => i !== index));
+  };
+
+  const addSupportingTalent = () => {
+    setSupportingTalent([...supportingTalent, { name: '', role: '' }]);
+  };
+
+  const updateSupportingTalent = (index: number, field: 'name' | 'role', value: string) => {
+    const newTalent = [...supportingTalent];
+    newTalent[index][field] = value;
+    setSupportingTalent(newTalent);
+  };
+
+  const removeSupportingTalent = (index: number) => {
+    setSupportingTalent(supportingTalent.filter((_, i) => i !== index));
+  };
+
+  // Vendors management
+  const addVendor = () => {
+    setVendors([...vendors, { name: '', type: '', description: '' }]);
+  };
+
+  const updateVendor = (index: number, field: 'name' | 'type' | 'description', value: string) => {
+    const newVendors = [...vendors];
+    newVendors[index][field] = value;
+    setVendors(newVendors);
+  };
+
+  const removeVendor = (index: number) => {
+    setVendors(vendors.filter((_, i) => i !== index));
+  };
+
+  // Awards management
+  const addAward = () => {
+    setAwards([...awards, { name: '', category: '', year: '', status: 'nominee' }]);
+  };
+
+  const updateAward = (index: number, field: 'name' | 'category' | 'year' | 'status', value: string) => {
+    const newAwards = [...awards];
+    newAwards[index][field] = value;
+    setAwards(newAwards);
+  };
+
+  const removeAward = (index: number) => {
+    setAwards(awards.filter((_, i) => i !== index));
+  };
+
+  // Generate thumbnail using Firebase Cloud Function
   const captureFrame = async () => {
     if (!videoRef.current || !user || !video) return;
 
@@ -168,144 +362,57 @@ export default function EditVideoPage() {
       return;
     }
 
-    try {
-      console.log('Capturing real frame at time:', currentTime);
-      
-      // Create a new video element with the same source for clean capture
-      const captureVideo = document.createElement('video');
-      captureVideo.src = video.playback?.mp4Url || video.storage?.downloadURL || '';
-      captureVideo.crossOrigin = 'anonymous';
-      captureVideo.muted = true;
-      
-      // Wait for video to load
-      await new Promise((resolve, reject) => {
-        captureVideo.onloadeddata = resolve;
-        captureVideo.onerror = reject;
-        captureVideo.load();
-      });
-      
-      // Seek to the desired time
-      captureVideo.currentTime = currentTime;
-      
-      // Wait for seek to complete
-      await new Promise((resolve) => {
-        captureVideo.onseeked = resolve;
-      });
-      
-      // Create canvas and capture frame
-      const canvas = document.createElement('canvas');
-      canvas.width = captureVideo.videoWidth || 1280;
-      canvas.height = captureVideo.videoHeight || 720;
-      
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        throw new Error('Canvas not supported');
-      }
-      
-      // Draw the video frame to canvas
-      ctx.drawImage(captureVideo, 0, 0, canvas.width, canvas.height);
-      
-      // Convert to blob and upload to Firebase
-      canvas.toBlob(async (blob) => {
-        if (!blob) {
-          alert('Failed to create thumbnail blob');
-          return;
-        }
-        
-        try {
-          // Upload to Firebase Storage
-          const timestamp = Date.now();
-          const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
-          
-          await uploadBytes(frameRef, blob);
-          const thumbnailUrl = await getDownloadURL(frameRef);
-          
-          // Add to captured frames
-          setCapturedFrames(prev => [...prev, thumbnailUrl]);
-          console.log('Real thumbnail captured and uploaded:', thumbnailUrl);
-          alert('Real video frame captured successfully!');
-          
-        } catch (uploadError) {
-          console.error('Error uploading thumbnail:', uploadError);
-          alert('Failed to upload thumbnail to storage.');
-        }
-      }, 'image/jpeg', 0.9);
+    // Validate timestamp
+    if (!isValidTimestamp(currentTime, video.techMeta?.durationSec)) {
+      setError('Invalid timestamp for thumbnail generation.');
+      return;
+    }
 
-    } catch (error) {
-      console.error('Error capturing frame:', error);
+    try {
+      setThumbnailGenerating(true);
+      setError('');
+      setSuccess('');
       
-      // Fallback: Create a time-marker thumbnail that actually saves to Firebase
-      try {
-        const timeMinutes = Math.floor(currentTime / 60);
-        const timeSeconds = Math.floor(currentTime % 60);
-        const timeDisplay = `${timeMinutes}:${timeSeconds.toString().padStart(2, '0')}`;
-        
-        // Create a proper thumbnail image
-        const canvas = document.createElement('canvas');
-        canvas.width = 1280;
-        canvas.height = 720;
-        const ctx = canvas.getContext('2d');
-        
-        if (ctx) {
-          // Create professional thumbnail with time info
-          const gradient = ctx.createLinearGradient(0, 0, 1280, 720);
-          gradient.addColorStop(0, '#0f172a');
-          gradient.addColorStop(1, '#1e293b');
+      console.log('Generating thumbnail at time:', formatTime(currentTime));
+      
+      // Call Firebase Cloud Function
+      const result = await generateVideoThumbnail({
+        videoId: video.id,
+        timestamp: currentTime,
+        userId: user.uid,
+        quality: 'high'
+      });
+      
+      if (result.success && result.thumbnailUrl) {
+        // Refresh video data to get the updated thumbnail
+        const videoDoc = await getDoc(doc(db, 'videos', video.id));
+        if (videoDoc.exists()) {
+          const updatedVideo = { id: videoDoc.id, ...videoDoc.data() } as Video;
+          setVideo(updatedVideo);
+          setSelectedThumbnail(updatedVideo.playback?.posterUrl || '');
           
-          ctx.fillStyle = gradient;
-          ctx.fillRect(0, 0, 1280, 720);
-          
-          // Add large play button
-          ctx.fillStyle = '#10B981';
-          ctx.beginPath();
-          ctx.arc(640, 360, 80, 0, 2 * Math.PI);
-          ctx.fill();
-          
-          // Add triangle
-          ctx.fillStyle = 'white';
-          ctx.beginPath();
-          ctx.moveTo(610, 330);
-          ctx.lineTo(610, 390);
-          ctx.lineTo(670, 360);
-          ctx.closePath();
-          ctx.fill();
-          
-          // Add time text
-          ctx.fillStyle = 'white';
-          ctx.font = 'bold 48px Arial';
-          ctx.textAlign = 'center';
-          ctx.fillText(timeDisplay, 640, 500);
-          
-          ctx.font = '24px Arial';
-          ctx.fillStyle = '#9ca3af';
-          ctx.fillText('Video Thumbnail', 640, 540);
-          
-          // Convert to blob and upload
-          canvas.toBlob(async (blob) => {
-            if (!blob) return;
-            
-            try {
-              const timestamp = Date.now();
-              const frameRef = ref(storage, `thumbnails/${video.id}/frame_${timestamp}.jpg`);
-              
-              await uploadBytes(frameRef, blob);
-              const thumbnailUrl = await getDownloadURL(frameRef);
-              
-              setCapturedFrames(prev => [...prev, thumbnailUrl]);
-              console.log('Fallback thumbnail uploaded:', thumbnailUrl);
-              alert(`Thumbnail created for ${timeDisplay} and saved to Firebase!`);
-              
-            } catch (uploadError) {
-              console.error('Error uploading fallback thumbnail:', uploadError);
-              alert('Failed to save thumbnail to Firebase.');
-            }
-          }, 'image/jpeg', 0.8);
+          // Update video player poster
+          if (videoRef.current && updatedVideo.playback?.posterUrl) {
+            videoRef.current.poster = updatedVideo.playback.posterUrl;
+          }
         }
         
-      } catch (fallbackError) {
-        console.error('Fallback thumbnail creation failed:', fallbackError);
-        alert('Failed to create thumbnail. Please try again.');
+        setSuccess(`Thumbnail updated successfully! (Generated in ${result.processingTime ? Math.round(result.processingTime / 1000) : '?'}s)`);
+        console.log('Thumbnail generated successfully:', result.thumbnailUrl);
+        
+      } else {
+        throw new Error(result.error || 'Unknown error occurred');
       }
+      
+    } catch (error) {
+      console.error('Error generating thumbnail:', error);
+      setError(error instanceof Error ? error.message : 'Failed to generate thumbnail. Please try again.');
+    } finally {
+      setThumbnailGenerating(false);
+      setTimeout(() => {
+        setSuccess('');
+        setError('');
+      }, 5000);
     }
   };
 
@@ -447,7 +554,36 @@ export default function EditVideoPage() {
       if (camera) techMeta.camera = camera;
       if (lenses) techMeta.lenses = lenses;
       if (location) techMeta.location = location;
+      if (resolution) techMeta.resolution = resolution;
+      if (frameRate) techMeta.frameRate = frameRate;
+      if (codec) techMeta.codec = codec;
+      if (colorProfile) techMeta.colorProfile = colorProfile;
       if (video.techMeta?.durationSec) techMeta.durationSec = video.techMeta.durationSec;
+
+      // Clean credits object
+      const credits = {
+        aboveLine: aboveLineCredits.filter(c => c.name.trim() && c.role.trim()),
+        belowLine: belowLineCredits.filter(c => c.name.trim() && c.role.trim())
+      };
+
+      // Clean talent object
+      const talent = {
+        lead: leadTalent.filter(t => t.name.trim() && t.role.trim()),
+        supporting: supportingTalent.filter(t => t.name.trim() && t.role.trim())
+      };
+
+      // Clean vendors array
+      const cleanVendors = vendors.filter(v => v.name.trim() && v.type.trim());
+
+      // Clean awards array
+      const cleanAwards = awards
+        .filter(a => a.name.trim())
+        .map(a => ({
+          name: a.name.trim(),
+          category: a.category.trim() || undefined,
+          year: a.year ? parseInt(a.year) : undefined,
+          status: a.status
+        }));
 
       const updateData: any = {
         title: title.trim(),
@@ -456,7 +592,13 @@ export default function EditVideoPage() {
         collaborators: collaborators
           .filter(c => c.name.trim() && c.role.trim())
           .map(c => ({ uid: '', role: c.role.trim(), name: c.name.trim() })),
+        credits,
+        talent,
+        vendors: cleanVendors,
+        awards: cleanAwards,
         techMeta,
+        releaseDate: releaseDate || null,
+        notes: notes.trim() || null,
         visibility,
         updatedAt: serverTimestamp()
       };
@@ -526,144 +668,241 @@ export default function EditVideoPage() {
         )}
 
         <form onSubmit={handleSubmit}>
-          {/* Video Player & Thumbnail Selection */}
+          {/* Video Preview & Thumbnail Management */}
           <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
-            <h2 style={{ marginBottom: 'var(--space-4)' }}>Video Preview & Thumbnails</h2>
+            <h2 style={{ marginBottom: 'var(--space-4)' }}>Video Preview & Thumbnail Selection</h2>
             
-            {/* Video Player */}
-            <div style={{ marginBottom: 'var(--space-4)' }}>
-              <div className="video-player-container" style={{
-                width: '100%',
-                maxWidth: '600px',
-                aspectRatio: '16/9',
-                background: '#000',
-                borderRadius: 'var(--radius-md)',
-                overflow: 'hidden',
-                position: 'relative'
-              }}>
-                {(video.playback?.mp4Url || video.storage?.downloadURL) ? (
-                  <video
-                    ref={videoRef}
-                    controls
-                    poster={selectedThumbnail || video.playback?.posterUrl}
-                    style={{ width: '100%', height: '100%' }}
-                    onError={(e) => {
-                      console.error('Video playback error:', e);
-                      console.log('Attempted video URL:', video.playback?.mp4Url || video.storage?.downloadURL);
-                      setVideoReady(false);
-                    }}
-                    onLoadStart={() => {
-                      console.log('Video loading started');
-                      setVideoReady(false);
-                    }}
-                    onCanPlay={() => {
-                      console.log('Video can play');
-                      setVideoReady(true);
-                    }}
-                    onLoadedData={() => {
-                      console.log('Video data loaded');
-                      setVideoReady(true);
-                    }}
-                  >
-                    <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/mp4" />
-                    <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/quicktime" />
-                    <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/avi" />
-                    Your browser does not support the video tag.
-                  </video>
-                ) : (
-                  <div style={{ 
-                    width: '100%', 
-                    height: '100%', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    color: 'white',
-                    flexDirection: 'column',
-                    gap: 'var(--space-2)'
-                  }}>
-                    <div>Video not available</div>
-                    <div style={{ fontSize: 'var(--text-small-size)', opacity: 0.7 }}>
-                      {video.playback?.mp4Url ? 'Playback URL exists but failed to load' : 'No playback URL found'}
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Thumbnail Generation Controls */}
-              <div style={{ 
-                display: 'flex', 
-                gap: 'var(--space-3)', 
-                alignItems: 'center', 
-                marginTop: 'var(--space-3)',
-                padding: 'var(--space-3)',
-                background: 'var(--surface-subtle)',
-                borderRadius: 'var(--radius-sm)'
-              }}>
-                <button
-                  type="button"
-                  onClick={captureFrame}
-                  className="btn btn--primary"
-                  disabled={!videoReady}
-                >
-                  📸 Set Thumbnail
-                </button>
-                <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)' }}>
-                  {videoReady 
-                    ? "Scrub to the perfect frame and click 'Set Thumbnail'"
-                    : "Loading video... Please wait"
-                  }
-                </p>
-              </div>
-            </div>
-
-            {/* Captured Frames */}
-            {capturedFrames.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-6)' }}>
+              {/* Video Player */}
               <div>
-                <h3 style={{ marginBottom: 'var(--space-3)' }}>Captured Frames</h3>
-                <div style={{ 
-                  display: 'grid', 
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', 
-                  gap: 'var(--space-3)',
-                  marginBottom: 'var(--space-4)'
+                <h3 style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--text-lg-size)' }}>Video Preview</h3>
+                <div className="video-player-container" style={{
+                  width: '100%',
+                  aspectRatio: '16/9',
+                  background: '#000',
+                  borderRadius: 'var(--radius-md)',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  marginBottom: 'var(--space-3)'
                 }}>
-                  {capturedFrames.map((frameUrl, index) => (
-                    <div 
-                      key={frameUrl}
-                      className={`thumbnail-option ${selectedThumbnail === frameUrl ? 'thumbnail-selected' : ''}`}
-                      onClick={() => selectThumbnail(frameUrl)}
-                      style={{ position: 'relative' }}
+                  {(video.playback?.mp4Url || video.storage?.downloadURL) ? (
+                    <video
+                      ref={videoRef}
+                      controls
+                      poster={selectedThumbnail || video.playback?.posterUrl}
+                      style={{ width: '100%', height: '100%' }}
+                      onError={(e) => {
+                        console.error('Video playback error:', e);
+                        console.log('Attempted video URL:', video.playback?.mp4Url || video.storage?.downloadURL);
+                        setVideoReady(false);
+                      }}
+                      onLoadStart={() => {
+                        console.log('Video loading started');
+                        setVideoReady(false);
+                      }}
+                      onCanPlay={() => {
+                        console.log('Video can play');
+                        setVideoReady(true);
+                      }}
+                      onLoadedData={() => {
+                        console.log('Video data loaded');
+                        setVideoReady(true);
+                      }}
                     >
+                      <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/mp4" />
+                      <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/quicktime" />
+                      <source src={video.playback?.mp4Url || video.storage?.downloadURL} type="video/avi" />
+                      Your browser does not support the video tag.
+                    </video>
+                  ) : (
+                    <div style={{ 
+                      width: '100%', 
+                      height: '100%', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      color: 'white',
+                      flexDirection: 'column',
+                      gap: 'var(--space-2)'
+                    }}>
+                      <div>Video not available</div>
+                      <div style={{ fontSize: 'var(--text-small-size)', opacity: 0.7 }}>
+                        {video.playback?.mp4Url ? 'Playback URL exists but failed to load' : 'No playback URL found'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Thumbnail Generation Controls */}
+                <div style={{ 
+                  padding: 'var(--space-4)',
+                  background: 'var(--surface-subtle)',
+                  borderRadius: 'var(--radius-sm)'
+                }}>
+                  <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                    <button
+                      type="button"
+                      onClick={captureFrame}
+                      className="btn btn--primary"
+                      disabled={!videoReady || thumbnailGenerating}
+                    >
+                      {thumbnailGenerating ? '⏳ Generating...' : '📸 Capture Current Frame'}
+                    </button>
+                  </div>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--text-small-size)', lineHeight: 1.4 }}>
+                    {thumbnailGenerating
+                      ? "Generating high-quality thumbnail from video frame..."
+                      : videoReady 
+                        ? "Scrub to the perfect moment in the video timeline and click 'Capture Current Frame' to create a professional thumbnail"
+                        : "Loading video... Please wait"
+                    }
+                  </p>
+                </div>
+              </div>
+
+              {/* Thumbnail Selection Panel */}
+              <div>
+                <h3 style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--text-lg-size)' }}>Thumbnail Options</h3>
+                
+                {/* Current Thumbnail */}
+                {selectedThumbnail && (
+                  <div style={{ marginBottom: 'var(--space-4)' }}>
+                    <h4 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-base-size)', color: 'var(--text-secondary)' }}>
+                      Current Thumbnail
+                    </h4>
+                    <div style={{ 
+                      position: 'relative',
+                      border: '2px solid var(--success)',
+                      borderRadius: 'var(--radius-sm)',
+                      overflow: 'hidden'
+                    }}>
                       <img 
-                        src={frameUrl} 
-                        alt={`Frame ${index + 1}`}
+                        src={selectedThumbnail} 
+                        alt="Current thumbnail"
                         style={{ 
                           width: '100%', 
                           aspectRatio: '16/9', 
-                          objectFit: 'cover',
-                          borderRadius: 'var(--radius-sm)',
-                          cursor: 'pointer'
+                          objectFit: 'cover'
                         }}
                       />
-                      {selectedThumbnail === frameUrl && (
-                        <div className="thumbnail-badge">
-                          ✓ Thumbnail
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeFrame(frameUrl);
-                        }}
-                        className="frame-remove-btn"
-                      >
-                        ×
-                      </button>
+                      <div style={{
+                        position: 'absolute',
+                        top: 'var(--space-2)',
+                        right: 'var(--space-2)',
+                        background: 'var(--success)',
+                        color: 'white',
+                        padding: 'var(--space-1) var(--space-2)',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: 'var(--text-small-size)',
+                        fontWeight: 600
+                      }}>
+                        ✓ Active
+                      </div>
                     </div>
-                  ))}
+                  </div>
+                )}
+
+                {/* Captured Frames */}
+                {capturedFrames.length > 0 && (
+                  <div>
+                    <h4 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-base-size)', color: 'var(--text-secondary)' }}>
+                      Captured Frames ({capturedFrames.length})
+                    </h4>
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: 'repeat(2, 1fr)', 
+                      gap: 'var(--space-2)',
+                      marginBottom: 'var(--space-4)'
+                    }}>
+                      {capturedFrames.map((frameUrl, index) => (
+                        <div 
+                          key={frameUrl}
+                          onClick={() => selectThumbnail(frameUrl)}
+                          style={{ 
+                            position: 'relative',
+                            cursor: 'pointer',
+                            border: selectedThumbnail === frameUrl ? '2px solid var(--interactive)' : '2px solid transparent',
+                            borderRadius: 'var(--radius-sm)',
+                            overflow: 'hidden',
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <img 
+                            src={frameUrl} 
+                            alt={`Frame ${index + 1}`}
+                            style={{ 
+                              width: '100%', 
+                              aspectRatio: '16/9', 
+                              objectFit: 'cover',
+                              display: 'block'
+                            }}
+                          />
+                          {selectedThumbnail === frameUrl && (
+                            <div style={{
+                              position: 'absolute',
+                              top: 'var(--space-1)',
+                              right: 'var(--space-1)',
+                              background: 'var(--interactive)',
+                              color: 'white',
+                              padding: '2px var(--space-1)',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '10px',
+                              fontWeight: 600
+                            }}>
+                              ✓
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeFrame(frameUrl);
+                            }}
+                            style={{
+                              position: 'absolute',
+                              top: 'var(--space-1)',
+                              left: 'var(--space-1)',
+                              background: 'rgba(0, 0, 0, 0.7)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: 'bold'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Instructions */}
+                <div style={{ 
+                  padding: 'var(--space-3)',
+                  background: 'var(--surface-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: 'var(--text-small-size)',
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.4
+                }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>💡 Tips:</strong>
+                  <ul style={{ margin: 'var(--space-2) 0 0 0', paddingLeft: 'var(--space-4)' }}>
+                    <li>Scrub through the video to find the most compelling moment</li>
+                    <li>Look for clear, well-lit shots that represent your content</li>
+                    <li>Avoid blurry frames or transition moments</li>
+                    <li>Click any captured frame to set it as your thumbnail</li>
+                  </ul>
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Hidden canvas for frame capture */}
             <canvas ref={canvasRef} style={{ display: 'none' }} />
@@ -815,6 +1054,78 @@ export default function EditVideoPage() {
               </div>
             </div>
 
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
+              <div>
+                <label htmlFor="resolution" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                  Resolution
+                </label>
+                <select
+                  id="resolution"
+                  value={resolution}
+                  onChange={(e) => setResolution(e.target.value)}
+                  className="input"
+                >
+                  <option value="">Select resolution</option>
+                  {RESOLUTION_OPTIONS.map((res) => (
+                    <option key={res} value={res}>{res}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label htmlFor="frameRate" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                  Frame Rate
+                </label>
+                <select
+                  id="frameRate"
+                  value={frameRate}
+                  onChange={(e) => setFrameRate(e.target.value)}
+                  className="input"
+                >
+                  <option value="">Select frame rate</option>
+                  {FRAME_RATE_OPTIONS.map((rate) => (
+                    <option key={rate} value={rate}>{rate}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
+              <div>
+                <label htmlFor="codec" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                  Codec
+                </label>
+                <select
+                  id="codec"
+                  value={codec}
+                  onChange={(e) => setCodec(e.target.value)}
+                  className="input"
+                >
+                  <option value="">Select codec</option>
+                  {CODEC_OPTIONS.map((cod) => (
+                    <option key={cod} value={cod}>{cod}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label htmlFor="colorProfile" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                  Color Profile
+                </label>
+                <select
+                  id="colorProfile"
+                  value={colorProfile}
+                  onChange={(e) => setColorProfile(e.target.value)}
+                  className="input"
+                >
+                  <option value="">Select color profile</option>
+                  {COLOR_PROFILE_OPTIONS.map((profile) => (
+                    <option key={profile} value={profile}>{profile}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div>
               <label htmlFor="location" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
                 Filming Location
@@ -878,6 +1189,392 @@ export default function EditVideoPage() {
             >
               + Add Collaborator
             </button>
+          </div>
+
+          {/* Credits */}
+          <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
+            <h2 style={{ marginBottom: 'var(--space-4)' }}>Credits</h2>
+            
+            {/* Above the Line Credits */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--text-lg-size)' }}>Above the Line</h3>
+              {aboveLineCredits.map((credit, index) => (
+                <div key={index} style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      value={credit.name}
+                      onChange={(e) => updateAboveLineCredit(index, 'name', e.target.value)}
+                      className="input"
+                      placeholder="John Smith"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Role
+                    </label>
+                    <input
+                      type="text"
+                      value={credit.role}
+                      onChange={(e) => updateAboveLineCredit(index, 'role', e.target.value)}
+                      className="input"
+                      placeholder="Executive Producer, Director, etc."
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeAboveLineCredit(index)}
+                    className="btn btn--ghost"
+                    style={{ height: 'var(--input-height)' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addAboveLineCredit}
+                className="btn btn--ghost"
+              >
+                + Add Above the Line Credit
+              </button>
+            </div>
+
+            {/* Below the Line Credits */}
+            <div>
+              <h3 style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--text-lg-size)' }}>Below the Line</h3>
+              {belowLineCredits.map((credit, index) => (
+                <div key={index} style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      value={credit.name}
+                      onChange={(e) => updateBelowLineCredit(index, 'name', e.target.value)}
+                      className="input"
+                      placeholder="Jane Doe"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Role
+                    </label>
+                    <input
+                      type="text"
+                      value={credit.role}
+                      onChange={(e) => updateBelowLineCredit(index, 'role', e.target.value)}
+                      className="input"
+                      placeholder="Cinematographer, Editor, etc."
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeBelowLineCredit(index)}
+                    className="btn btn--ghost"
+                    style={{ height: 'var(--input-height)' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addBelowLineCredit}
+                className="btn btn--ghost"
+              >
+                + Add Below the Line Credit
+              </button>
+            </div>
+          </div>
+
+          {/* Talent */}
+          <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
+            <h2 style={{ marginBottom: 'var(--space-4)' }}>Talent</h2>
+            
+            {/* Lead Talent */}
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <h3 style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--text-lg-size)' }}>Lead</h3>
+              {leadTalent.map((talent, index) => (
+                <div key={index} style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      value={talent.name}
+                      onChange={(e) => updateLeadTalent(index, 'name', e.target.value)}
+                      className="input"
+                      placeholder="Actor Name"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Character/Role
+                    </label>
+                    <input
+                      type="text"
+                      value={talent.role}
+                      onChange={(e) => updateLeadTalent(index, 'role', e.target.value)}
+                      className="input"
+                      placeholder="Character Name or Role"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeLeadTalent(index)}
+                    className="btn btn--ghost"
+                    style={{ height: 'var(--input-height)' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addLeadTalent}
+                className="btn btn--ghost"
+              >
+                + Add Lead Talent
+              </button>
+            </div>
+
+            {/* Supporting Talent */}
+            <div>
+              <h3 style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--text-lg-size)' }}>Supporting</h3>
+              {supportingTalent.map((talent, index) => (
+                <div key={index} style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      value={talent.name}
+                      onChange={(e) => updateSupportingTalent(index, 'name', e.target.value)}
+                      className="input"
+                      placeholder="Actor Name"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Character/Role
+                    </label>
+                    <input
+                      type="text"
+                      value={talent.role}
+                      onChange={(e) => updateSupportingTalent(index, 'role', e.target.value)}
+                      className="input"
+                      placeholder="Character Name or Role"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeSupportingTalent(index)}
+                    className="btn btn--ghost"
+                    style={{ height: 'var(--input-height)' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addSupportingTalent}
+                className="btn btn--ghost"
+              >
+                + Add Supporting Talent
+              </button>
+            </div>
+          </div>
+
+          {/* Vendors */}
+          <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
+            <h2 style={{ marginBottom: 'var(--space-4)' }}>Vendors</h2>
+            
+            {vendors.map((vendor, index) => (
+              <div key={index} style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-4)', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)' }}>
+                <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-3)', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Vendor Name
+                    </label>
+                    <input
+                      type="text"
+                      value={vendor.name}
+                      onChange={(e) => updateVendor(index, 'name', e.target.value)}
+                      className="input"
+                      placeholder="Company Name"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Type
+                    </label>
+                    <select
+                      value={vendor.type}
+                      onChange={(e) => updateVendor(index, 'type', e.target.value)}
+                      className="input"
+                    >
+                      <option value="">Select type</option>
+                      {VENDOR_TYPES.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeVendor(index)}
+                    className="btn btn--ghost"
+                    style={{ height: 'var(--input-height)' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                    Description (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={vendor.description}
+                    onChange={(e) => updateVendor(index, 'description', e.target.value)}
+                    className="input"
+                    placeholder="Brief description of services provided"
+                  />
+                </div>
+              </div>
+            ))}
+            
+            <button
+              type="button"
+              onClick={addVendor}
+              className="btn btn--ghost"
+            >
+              + Add Vendor
+            </button>
+          </div>
+
+          {/* Awards */}
+          <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
+            <h2 style={{ marginBottom: 'var(--space-4)' }}>Awards & Recognition</h2>
+            
+            {awards.map((award, index) => (
+              <div key={index} style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-4)', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)' }}>
+                <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-3)', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 2 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Award Name
+                    </label>
+                    <input
+                      type="text"
+                      value={award.name}
+                      onChange={(e) => updateAward(index, 'name', e.target.value)}
+                      className="input"
+                      placeholder="Emmy Award, Cannes Film Festival, etc."
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Status
+                    </label>
+                    <select
+                      value={award.status}
+                      onChange={(e) => updateAward(index, 'status', e.target.value)}
+                      className="input"
+                    >
+                      <option value="winner">Winner</option>
+                      <option value="nominee">Nominee</option>
+                      <option value="finalist">Finalist</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeAward(index)}
+                    className="btn btn--ghost"
+                    style={{ height: 'var(--input-height)' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Category (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={award.category}
+                      onChange={(e) => updateAward(index, 'category', e.target.value)}
+                      className="input"
+                      placeholder="Best Cinematography, Best Short Film, etc."
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: 'var(--space-1)', fontSize: 'var(--text-small-size)' }}>
+                      Year (Optional)
+                    </label>
+                    <input
+                      type="number"
+                      value={award.year}
+                      onChange={(e) => updateAward(index, 'year', e.target.value)}
+                      className="input"
+                      placeholder="2024"
+                      min="1900"
+                      max={new Date().getFullYear() + 1}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            <button
+              type="button"
+              onClick={addAward}
+              className="btn btn--ghost"
+            >
+              + Add Award
+            </button>
+          </div>
+
+          {/* Release Date & Notes */}
+          <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
+            <h2 style={{ marginBottom: 'var(--space-4)' }}>Additional Information</h2>
+            
+            <div style={{ marginBottom: 'var(--space-4)' }}>
+              <label htmlFor="releaseDate" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                Release Date
+              </label>
+              <input
+                id="releaseDate"
+                type="date"
+                value={releaseDate}
+                onChange={(e) => setReleaseDate(e.target.value)}
+                className="input"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="notes" style={{ display: 'block', marginBottom: 'var(--space-2)' }}>
+                Production Notes
+              </label>
+              <textarea
+                id="notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="input"
+                rows={4}
+                maxLength={2000}
+                style={{ resize: 'vertical', minHeight: '120px' }}
+                placeholder="Behind-the-scenes information, production challenges, special techniques used, etc."
+              />
+              <div className="char-counter">{notes.length}/2000 characters</div>
+            </div>
           </div>
 
           {/* Submit */}

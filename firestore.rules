@@ -19,6 +19,12 @@ service cloud.firestore {
                      (request.auth != null && request.auth.uid == resource.data.ownerUid);
       allow write: if request.auth != null && request.auth.uid == resource.data.ownerUid;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.ownerUid;
+      
+      // Allow Cloud Functions to update thumbnail URLs for video owners
+      allow update: if request.auth != null && 
+                       request.auth.uid == resource.data.ownerUid &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['playback.posterUrl', 'updatedAt']);
     }
     
     // Credits - users can read public credits, write their own

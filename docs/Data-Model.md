@@ -8,8 +8,12 @@
 - uid: string (Auth UID)
 - email: string
 - createdAt: Timestamp
+- updatedAt: Timestamp
 - onboarded: boolean
 - role: enum ["user", "companyAdmin", "admin"]
+- subscriptionStatus: enum ["inactive", "active", "canceled", "past_due"] (default: "inactive")
+- subscriptionId: string (Stripe subscription ID)
+- customerId: string (Stripe customer ID)
 
 ### profiles (docId = uid)
 - displayName: string
